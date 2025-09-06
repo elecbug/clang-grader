@@ -102,12 +102,17 @@ def fetch_raw(url: str, token: Optional[str], max_retries: int = 5) -> bytes:
     raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts")
 
 def get_commit_before(owner, repo, branch, path, limit_dt: datetime, token: Optional[str]) -> Optional[str]:
-    """Return commit sha of the last commit <= limit_dt for the given file."""
+    """Return commit sha of the last commit <= limit_dt (UTC) for the given file."""
     headers = {"Accept": "application/vnd.github+json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
+
+    # API expects a repository-relative, *decoded* path (UTF-8 text)
+    api_path = unquote(path)
+
     url = f"https://api.github.com/repos/{owner}/{repo}/commits"
-    params = {"path": path, "sha": branch, "per_page": 50}
+    params = {"path": api_path, "sha": branch, "per_page": 50}
+
     while True:
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         if resp.status_code != 200:
@@ -115,13 +120,16 @@ def get_commit_before(owner, repo, branch, path, limit_dt: datetime, token: Opti
         commits = resp.json()
         if not commits:
             break
-        chosen = None
+
         for c in commits:
-            dt = datetime.fromisoformat(c["commit"]["committer"]["date"].replace("Z", "+09:00"))
+            # Parse as UTC; do NOT shift to +09:00
+            # Examples: "2025-09-05T11:49:00Z"
+            ts = c["commit"]["committer"]["date"]
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
             if dt <= limit_dt:
-                chosen = c["sha"]
-                return chosen
-        # If all commits on this page are after limit, follow pagination
+                return c["sha"]
+
+        # Follow pagination if needed
         if "next" in resp.links:
             url = resp.links["next"]["url"]
             params = None
@@ -181,7 +189,8 @@ def main():
             except Exception as e:
                 print(f"[{stu}] commit lookup failed: {e}", file=sys.stderr)
         if commit_sha:
-            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/{path}"
+            path_for_raw = _encode_path_preserving_segments(unquote(path))
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/{path_for_raw}"
             print(f"[{stu}] Using commit {commit_sha} before {limit_dt.isoformat()}")
         else:
             if limit_dt:
