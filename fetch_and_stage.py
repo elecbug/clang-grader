@@ -19,14 +19,6 @@ RAW_RE = re.compile(
     r"^https?://raw\.githubusercontent\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?P<branch>[^/]+)/(?P<path>.+)$"
 )
 
-
-BLOB_RE = re.compile(
-    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/blob/(?P<branch>[^/]+)/(?P<path>.+)$"
-)
-RAW_RE = re.compile(
-    r"^https?://raw\.githubusercontent\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?P<branch>[^/]+)/(?P<path>.+)$"
-)
-
 def _nfkc(s: str) -> str:
     """Normalize full-width characters to ASCII-compatible form."""
     return unicodedata.normalize("NFKC", s)
