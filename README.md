@@ -135,11 +135,11 @@ python3 make_student_map.py table.txt \
   "students": [
     {
       "id": "5880642",
-      "url": "https://github.com/seojin57913/Project1/blob/master/Project1/ex01.c"
+      "url": "https://github.com/stu1/Project1/blob/master/Project1/ex01.c"
     },
     {
       "id": "5880397",
-      "url": "https://github.com/GARIM1206/DataStructure/blob/master/0904/0904.c"
+      "url": "https://github.com/stu2/DataStructure/blob/master/0904/0904.c"
     }
   ]
 }
