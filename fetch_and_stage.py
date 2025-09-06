@@ -117,7 +117,7 @@ def get_commit_before(owner, repo, branch, path, limit_dt: datetime, token: Opti
             break
         chosen = None
         for c in commits:
-            dt = datetime.fromisoformat(c["commit"]["committer"]["date"].replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(c["commit"]["committer"]["date"].replace("Z", "+09:00"))
             if dt <= limit_dt:
                 chosen = c["sha"]
                 return chosen
@@ -168,11 +168,16 @@ def main():
         url = it.get("url")
         if not stu or not url:
             continue
-        owner, repo, branch, path, raw_url, guessed = to_raw_parts(url)
+        try:
+            owner, repo, branch, path, raw_url, guessed = to_raw_parts(url)
+        except Exception as e:
+            print(f"[{stu}] URL parsing failed: {e}", file=sys.stderr)
+            continue
         commit_sha = None
         if limit_dt is not None:
             try:
                 commit_sha = get_commit_before(owner, repo, branch, path, limit_dt, token)
+                print(commit_sha)
             except Exception as e:
                 print(f"[{stu}] commit lookup failed: {e}", file=sys.stderr)
         if commit_sha:

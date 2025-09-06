@@ -114,7 +114,7 @@ python3 fetch_and_stage.py \
 
 ### 6. make\_student\_map.py
 
-* 제출현황 텍스트(엑셀에서 복사한 표 형태/기본적으로 계명대학교 과제평가의 `엑셀 다운로드` 포맷과 일치)에서 학생 ID와 GitHub URL을 추출하여 `student_map.json` 생성.
+* 제출현황 텍스트(엑셀에서 복사한 표 형태/기본적으로 계명대학교 과제평가의 `엑셀 다운로드` 내용을 복사한 것과 동일)에서 학생 ID와 GitHub URL을 추출하여 `student_map.json` 생성.
 * URL이 전각문자(`ＨＴＴＰＳ ://...`)로 깨져도 자동 정규화.
 * `.c`/`.cpp` 파일 링크만 우선 선택.
 * 실행 예:
@@ -183,8 +183,14 @@ python3 make_student_map.py table.txt \
 ./build.sh
 
 # 2. student_map.json 생성
-python3 make_student_map.py table.txt --limit 2025-09-09T00:00:00Z --only-submitted --include-nonfile -o data/hw-test/student_map.json
+python3 make_student_map.py 
+  data/hw-test/table.txt \         # 입력 테이블(엑셀 복사본)
+  --limit 2025-09-09T00:00:00Z \
+  --only-submitted \
+  --pretty \
+  --include-nonfile \
+  -o data/hw-test/student_map.json # 학생 ID : 과제 URL 파일
 
 # 3. 채점 실행
-./run.sh hw-test data/hw-test/student_map.json
+./run.sh data/hw-test              # tests.json 및 student_map.json 파일 위치
 ```

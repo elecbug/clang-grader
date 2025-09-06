@@ -14,20 +14,20 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="${ROOT_DIR}"
 
 # Parse args
-if [[ $# -lt 2 ]]; then
-  echo "Usage: $0 <suite-folder or data/suite-folder> <student_map.json>"
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <suite-folder or data/suite-folder>"
   exit 1
 fi
 
 ARG_SUITE="$1"
-MAP_JSON="$2"
 
 # Normalize suite
 CLEAN_SUITE="${ARG_SUITE#data/}"
 CLEAN_SUITE="${CLEAN_SUITE#./}"
 SUITE_NAME="${CLEAN_SUITE}"                           # e.g., hw-test
-SUITE_DIR="${WORK_DIR}/data/${SUITE_NAME}"           # e.g., /repo/data/hw-test
+SUITE_DIR="${WORK_DIR}/data/${SUITE_NAME}"            # e.g., /repo/data/hw-test
 TESTS_PATH="${SUITE_DIR}/tests.json"
+MAP_JSON="${SUITE_DIR}/student_map.json"              # e.g., /repo/data/hw-test/student_map.json
 
 # Checks
 if [[ ! -f "${MAP_JSON}" ]]; then
