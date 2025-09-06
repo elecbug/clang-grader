@@ -2,94 +2,93 @@
 set -euo pipefail
 
 # ============================================================
-# Usage:
-#   ./run.sh                    # default: data/tests.json in data/ (legacy)
-#   ./run.sh hw-test            # uses data/hw-test/tests.json and data/hw-test/stu*/
-#   ./run.sh data/hw-test       # same as above
+# Usage examples:
+#   ./run.sh hw-test data/hw-test/student_map.json
+#   ./run.sh data/hw-test data/hw-test/student_map.json
+#   GITHUB_TOKEN=ghp_xxx ./run.sh hw-test data/hw-test/student_map.json
 # ============================================================
 
-# Image name built by build.sh
 IMAGE_NAME="c-stdin-tester"
 
-# Resolve repo root
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORK_DIR="${ROOT_DIR}"
 
-# ---------- Parse target suite folder ----------
-# Accept:
-#   - empty (fallback to legacy: data/tests.json + data/*/)
-#   - "hw-test"
-#   - "data/hw-test"
-ARG_SUITE="${1:-}"
-
-# Normalize to a folder name under data/
-if [[ -z "${ARG_SUITE}" ]]; then
-  # Legacy mode (kept for backward compatibility)
-  SUITE_NAME="tests"                              # report folder name
-  SUITE_DIR="${WORK_DIR}/data"                    # where stu*/ live
-  TESTS_PATH="${WORK_DIR}/data/tests.json"
-else
-  # If user passed "data/hw-test", strip leading "data/"
-  CLEAN_NAME="${ARG_SUITE#data/}"
-  # Also strip any leading "./"
-  CLEAN_NAME="${CLEAN_NAME#./}"
-  SUITE_NAME="${CLEAN_NAME}"                      # e.g., "hw-test"
-  SUITE_DIR="${WORK_DIR}/data/${SUITE_NAME}"      # e.g., /repo/data/hw-test
-  TESTS_PATH="${SUITE_DIR}/tests.json"
+# Parse args
+if [[ $# -lt 2 ]]; then
+  echo "Usage: $0 <suite-folder or data/suite-folder> <student_map.json>"
+  exit 1
 fi
 
-# ---------- Sanity checks ----------
+ARG_SUITE="$1"
+MAP_JSON="$2"
+
+# Normalize suite
+CLEAN_SUITE="${ARG_SUITE#data/}"
+CLEAN_SUITE="${CLEAN_SUITE#./}"
+SUITE_NAME="${CLEAN_SUITE}"                           # e.g., hw-test
+SUITE_DIR="${WORK_DIR}/data/${SUITE_NAME}"           # e.g., /repo/data/hw-test
+TESTS_PATH="${SUITE_DIR}/tests.json"
+
+# Checks
+if [[ ! -f "${MAP_JSON}" ]]; then
+  echo "Mapping JSON not found: ${MAP_JSON}"
+  exit 1
+fi
+if [[ ! -d "${SUITE_DIR}" ]]; then
+  echo "Suite directory not found: ${SUITE_DIR}"
+  exit 1
+fi
+if [[ ! -f "${TESTS_PATH}" ]]; then
+  echo "tests.json not found: ${TESTS_PATH}"
+  exit 1
+fi
 if ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
   echo "Docker image '${IMAGE_NAME}' not found. Build it first:"
   echo "  ./build.sh"
   exit 1
 fi
 
-if [[ ! -d "${SUITE_DIR}" ]]; then
-  echo "Suite directory not found: ${SUITE_DIR}"
-  exit 1
-fi
+# 1) Fetch & stage sources from GitHub into data/<suite>/<stu>/main.c
+echo "========================================"
+echo "Fetching sources using ${MAP_JSON} into ${SUITE_DIR}"
+python3 "${WORK_DIR}/fetch_and_stage.py" \
+  --map "${MAP_JSON}" \
+  --suite "${SUITE_NAME}" \
+  --data-root "${WORK_DIR}/data" \
+  --rename-to "main.c" \
+  --keep-original \
+  --hash-check \
+  --respect-limit || {
+    echo "Fetch step failed."
+    exit 1
+  }
 
-if [[ ! -f "${TESTS_PATH}" ]]; then
-  echo "tests.json not found: ${TESTS_PATH}"
-  exit 1
-fi
-
-# ---------- Reports directory ----------
+# 2) Grade each student under suite
 REPORT_DIR="${WORK_DIR}/reports/${SUITE_NAME}"
 mkdir -p "${REPORT_DIR}"
 
-echo "Suite directory : ${SUITE_DIR}"
-echo "Tests file      : ${TESTS_PATH}"
-echo "Report directory: ${REPORT_DIR}"
-
-# ---------- Collect student directories under suite ----------
+echo "========================================"
+echo "Running tests for suite '${SUITE_NAME}'..."
 shopt -s nullglob
 stu_dirs=("${SUITE_DIR}"/*/)
 if [[ ${#stu_dirs[@]} -eq 0 ]]; then
-  echo "No student directories under ${SUITE_DIR}"
+  echo "No student directories found under ${SUITE_DIR}"
   exit 1
 fi
 
-echo "Running tests for each student in '${SUITE_NAME}'..."
 total_students=0
 failed_students=0
 
 for d in "${stu_dirs[@]}"; do
-  # Each student directory must contain main.c
   if [[ ! -f "${d}/main.c" ]]; then
     continue
   fi
-
   stu_name="$(basename "${d%/}")"
   total_students=$((total_students+1))
 
   echo "----------------------------------------"
   echo "Student: ${stu_name}"
 
-  # Binary output under the student's own folder for this suite
-  # Store inside the same suite path to avoid collisions:
-  # e.g., /work/data/hw-test/stu1/a.out
   BIN_PATH="/work/data/${SUITE_NAME}/${stu_name}/a.out"
   REPORT_PATH="/work/reports/${SUITE_NAME}/${stu_name}.json"
 
