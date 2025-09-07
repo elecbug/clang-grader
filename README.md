@@ -178,21 +178,28 @@ python3 make_student_map.py table.txt \
 
 ## 실행 요약
 
-```bash
-# 1. Docker 이미지 빌드
-./build.sh
+### 1. Docker 이미지 빌드
 
-# 2. student_map.json 생성
+```bash
+./build.sh
+```
+
+### 2. student_map.json 생성
+
+```bash
 python3 make_student_map.py \
-  data/hw-test/table.txt \         # 입력 테이블(엑셀 복사본)
+  data/hw-test/table.txt \
   --limit 2025-09-09T00:00:00Z \
   --only-submitted \
   --pretty \
   --include-nonfile \
-  -o data/hw-test/student_map.json # 학생 ID : 과제 URL 파일
+  -o data/hw-test/student_map.json
+```
 
-# 3. 채점 실행
-./run.sh data/hw-test              # tests.json 및 student_map.json 파일 위치
+### 3. 채점 실행
+
+```bash
+./run.sh data/hw-test
 ```
 
 ---
@@ -203,6 +210,6 @@ python3 make_student_map.py \
 
 ```bash
 python3 similarity_report.py \ 
-  data/hw-test \                # 유사도 검사를 진행할 소스코드 경로
-  -o reports/hw-01/sim.json     # 유사도 검사 결과
+  data/hw-test \                
+  -o reports/hw-01/sim.json
 ```

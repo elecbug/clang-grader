@@ -7,10 +7,9 @@ import os
 import re
 import sys
 import time
-import hashlib
 import unicodedata
 import requests
-from typing import Tuple, Optional, List, Dict
+from typing import Tuple, Optional, List
 from urllib.parse import urlsplit, urlunsplit, unquote, quote
 from datetime import datetime, timezone
 
@@ -28,24 +27,14 @@ RAW_RE = re.compile(
 # Helpers
 # ---------------------------
 def _nfkc(s: str) -> str:
-    """Normalize full-width characters to ASCII-compatible form."""
     return unicodedata.normalize("NFKC", s)
 
 def _encode_path_preserving_segments(path: str) -> str:
-    """
-    Safely percent-encode a Git path:
-    - Split on '/', unquote each segment (handles already-encoded Korean etc.)
-    - Re-quote each segment so non-ASCII is encoded, slashes preserved.
-    """
     segs = path.split("/")
     enc = [quote(unquote(seg), safe="") for seg in segs]
     return "/".join(enc)
 
 def to_raw_parts(url: str):
-    """
-    Return (owner, repo, branch, path, raw_url, filename) with robust handling for
-    non-ASCII (e.g., Korean) filenames and already percent-encoded paths.
-    """
     url = _nfkc(url).strip()
     parts = urlsplit(url)
     clean_url = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
@@ -76,8 +65,27 @@ def to_raw_parts(url: str):
         raise ValueError(f"Unsupported GitHub URL shape: {url}")
     raise ValueError(f"Unrecognized GitHub URL: {url}")
 
+def gh_get(url: str, token: Optional[str], params: Optional[dict] = None, accept: str = "application/vnd.github+json"):
+    headers = {"Accept": accept}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    backoff = 1.0
+    while True:
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code == 200:
+            return resp
+        if resp.status_code in (403, 429):
+            reset = resp.headers.get("X-RateLimit-Reset")
+            if reset and reset.isdigit():
+                sleep_s = max(0, int(reset) - int(time.time()) + 1)
+            else:
+                sleep_s = backoff
+            time.sleep(sleep_s)
+            backoff = min(backoff * 2, 60)
+            continue
+        raise RuntimeError(f"GitHub API {resp.status_code}: {resp.text[:200]}")
+
 def fetch_raw(url: str, token: Optional[str], max_retries: int = 5) -> bytes:
-    """Fetch raw file bytes with optional token and backoff."""
     headers = {"Accept": "application/vnd.github.v3.raw"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -98,35 +106,10 @@ def fetch_raw(url: str, token: Optional[str], max_retries: int = 5) -> bytes:
         raise RuntimeError(f"HTTP {resp.status_code} fetching {url}: {resp.text[:200]}")
     raise RuntimeError(f"Failed to fetch {url} after {max_retries} attempts")
 
-def gh_get(url: str, token: Optional[str], params: Optional[dict] = None, accept: str = "application/vnd.github+json"):
-    """GET helper for GitHub API with token/backoff."""
-    headers = {"Accept": accept}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    backoff = 1.0
-    while True:
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
-        if resp.status_code == 200:
-            return resp
-        if resp.status_code in (403, 429):
-            reset = resp.headers.get("X-RateLimit-Reset")
-            if reset and reset.isdigit():
-                sleep_s = max(0, int(reset) - int(time.time()) + 1)
-            else:
-                sleep_s = backoff
-            time.sleep(sleep_s)
-            backoff = min(backoff * 2, 60)
-            continue
-        raise RuntimeError(f"GitHub API {resp.status_code}: {resp.text[:200]}")
-
 # ---------------------------
-# Commit / tree lookup
+# Commit / tree / contents
 # ---------------------------
 def get_repo_commit_before(owner: str, repo: str, branch: str, limit_dt: datetime, token: Optional[str]) -> Optional[str]:
-    """
-    Return the repository HEAD commit sha on the given branch whose committer date <= limit_dt (UTC).
-    We page through history until we find the first <= limit date.
-    """
     url = f"https://api.github.com/repos/{owner}/{repo}/commits"
     params = {"sha": branch, "per_page": 100}
     while True:
@@ -135,22 +118,21 @@ def get_repo_commit_before(owner: str, repo: str, branch: str, limit_dt: datetim
         if not commits:
             return None
         for c in commits:
-            ts = c["commit"]["committer"]["date"]  # ISO8601 with 'Z'
+            ts = c["commit"]["committer"]["date"]
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(timezone.utc)
             if dt <= limit_dt:
                 return c["sha"]
-        # older pages
         if "next" in resp.links:
             url = resp.links["next"]["url"]
             params = None
             continue
         return None
 
+def get_branch_head(owner: str, repo: str, branch: str, token: Optional[str]) -> str:
+    resp = gh_get(f"https://api.github.com/repos/{owner}/{repo}/commits/{branch}", token)
+    return resp.json()["sha"]
+
 def list_tree_c_h_paths(owner: str, repo: str, commit_sha: str, token: Optional[str], scope_prefix: Optional[str]) -> List[str]:
-    """
-    List all .c / .h file paths at the given commit. If scope_prefix is given,
-    only return paths under that prefix (directory scope).
-    """
     url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{commit_sha}"
     resp = gh_get(url, token, params={"recursive": "1"})
     data = resp.json()
@@ -167,6 +149,24 @@ def list_tree_c_h_paths(owner: str, repo: str, commit_sha: str, token: Optional[
             paths.append(p)
     return paths
 
+def get_content_meta(owner: str, repo: str, path: str, ref: str, token: Optional[str]) -> Optional[dict]:
+    """Return contents metadata for a path at ref. Keys: type ('file'/'dir'), path, name."""
+    # API returns 200 for both file and directory; file → dict, dir → list
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{_encode_path_preserving_segments(unquote(path))}"
+    try:
+        resp = gh_get(url, token, params={"ref": ref})
+    except Exception:
+        return None
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    if isinstance(data, dict) and data.get("type") == "file":
+        return {"type": "file", "path": data.get("path"), "name": data.get("name")}
+    if isinstance(data, list):
+        return {"type": "dir", "path": path, "name": os.path.basename(unquote(path))}
+    return None
+
 # ---------------------------
 # IO helpers
 # ---------------------------
@@ -179,19 +179,23 @@ def safe_write(path: str, data: bytes) -> None:
 # Main
 # ---------------------------
 def main():
-    ap = argparse.ArgumentParser(description="Fetch C/H sources from GitHub and stage per-student directories.")
+    ap = argparse.ArgumentParser(description="Fetch C/H sources and the representative file from GitHub per student.")
     ap.add_argument("--map", required=True, help="Path to student map JSON (list or {limit, students}).")
     ap.add_argument("--suite", required=True, help="Suite name (staged under data/<suite>/).")
     ap.add_argument("--data-root", default="data", help="Root data directory (default: data).")
     ap.add_argument("--rename-to", default="main.c",
-                    help="If representative file's basename differs, also save a copy as this name at student root (default: main.c).")
-    ap.add_argument("--keep-original", action="store_true", help="Also save representative file with its original filename at student root.")
-    ap.add_argument("--hash-check", action="store_true", help="Skip download if representative file hash unchanged (still downloads others).")
-    ap.add_argument("--respect-limit", action="store_true", help="Respect 'limit' field in map JSON (ISO 8601).")
+                    help="Also save representative file as this name at student root (default: main.c).")
+    ap.add_argument("--keep-original", action="store_true",
+                    help="Also save representative file with its original filename at student root.")
+    ap.add_argument("--respect-limit", action="store_true",
+                    help="Respect 'limit' field in map JSON (ISO 8601).")
     ap.add_argument("--scope", choices=["repo", "dir"], default="repo",
-                    help="Fetch scope: whole repo (repo) or only under the representative file's directory (dir). Default: repo.")
+                    help="Fetch scope: whole repo or only under representative directory.")
     ap.add_argument("--preserve-subdirs", action="store_true", default=True,
-                    help="Preserve the original subdirectory structure under student's folder.")
+                    help="Preserve original subdirectory structure when staging .c/.h.")
+    ap.add_argument("--force-rename", action="store_true",
+                help="Force saving representative file as rename-to even if it is a .c file. Default: False")
+
     args = ap.parse_args()
 
     token = os.environ.get("GITHUB_TOKEN", "").strip() or None
@@ -220,54 +224,97 @@ def main():
         if not stu or not url:
             continue
 
-        # Parse representative URL (usually the problem file)
         try:
-            owner, repo, branch, path, raw_url, guessed = to_raw_parts(url)
+            owner, repo, branch, path, _, _ = to_raw_parts(url)
         except Exception as e:
             print(f"[{stu}] URL parsing failed: {e}", file=sys.stderr)
             continue
 
-        # Determine commit sha
+        # Resolve commit
         if limit_dt is not None:
-            try:
-                commit_sha = get_repo_commit_before(owner, repo, branch, limit_dt, token)
-            except Exception as e:
-                print(f"[{stu}] commit lookup failed: {e}", file=sys.stderr)
-                commit_sha = None
+            commit_sha = get_repo_commit_before(owner, repo, branch, limit_dt, token)
             if not commit_sha:
-                print(f"[{stu}] No commit on branch '{branch}' before {limit_dt.isoformat()}, skipping.")
+                print(f"[{stu}] No commit on '{branch}' <= {limit_dt.isoformat()}, skipping.")
                 continue
-            print(f"[{stu}] Using repo commit {commit_sha} (<= {limit_dt.isoformat()})")
+            print(f"[{stu}] Using commit {commit_sha} (<= {limit_dt.isoformat()})")
         else:
-            # Use branch HEAD
             try:
-                resp = gh_get(f"https://api.github.com/repos/{owner}/{repo}/commits/{branch}", token)
-                commit_sha = resp.json()["sha"]
+                commit_sha = get_branch_head(owner, repo, branch, token)
                 print(f"[{stu}] Using branch HEAD {commit_sha}")
             except Exception as e:
                 print(f"[{stu}] HEAD lookup failed: {e}", file=sys.stderr)
                 continue
 
-        # Decide scope prefix (for dir-scope mode)
-        rep_dir_prefix = os.path.dirname(unquote(path))
+        # 1) Decide how to handle the representative path
+        rep_meta = get_content_meta(owner, repo, path, commit_sha, token)
+        rep_saved = False
+        skip_paths = set()  # paths to skip in tree loop to avoid duplicates
+
+        if rep_meta and rep_meta["type"] == "file":
+            rep_rel = rep_meta["path"]              # repo-relative UTF-8 path
+            rep_basename = os.path.basename(unquote(rep_rel))
+            rep_is_c = rep_basename.lower().endswith(".c")
+
+            # Case A) representative is a .c file
+            if rep_is_c and not args.force_rename:
+                # Do NOT create an extra main.c copy to avoid duplicate mains.
+                # We rely on tree collection to fetch this .c file (and others).
+                print(f"[{stu}] representative is .c; not duplicating as {args.rename_to}.")
+                rep_saved = False
+                # nothing added to skip_paths here; we want tree to stage it normally.
+
+            else:
+                # Case B) representative is not .c (or force-rename enabled)
+                # Fetch and save to student root as rename_to (e.g., main.c)
+                rep_enc = _encode_path_preserving_segments(unquote(rep_rel))
+                rep_raw = f"https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/{rep_enc}"
+                try:
+                    data = fetch_raw(rep_raw, token)
+
+                    # always save as rename_to for compilation readiness
+                    target_main = os.path.join(suite_dir, stu, args.rename_to)
+                    safe_write(target_main, data)
+
+                    # optionally keep original name at root ONLY when it won't collide
+                    # Note: to avoid multi-main, we do NOT write an extra .c at root if rep_is_c
+                    if args.keep_original and not rep_is_c:
+                        target_orig = os.path.join(suite_dir, stu, rep_basename)
+                        if not os.path.exists(target_orig):
+                            safe_write(target_orig, data)
+
+                    print(f"[{stu}] representative saved as {args.rename_to}"
+                        f"{' (orig kept)' if (args.keep_original and not rep_is_c) else ''}")
+                    rep_saved = True
+
+                    # If we forced a duplicate of a .c (force-rename), then skip original path in tree
+                    if rep_is_c and args.force-rename:
+                        skip_paths.add(rep_rel)
+
+                except Exception as e:
+                    print(f"[{stu}] representative fetch failed: {e}", file=sys.stderr)
+                    rep_saved = False
+
+        # 2) Then fetch .c/.h by scope (repo/dir)
         scope_prefix = None
         if args.scope == "dir":
-            scope_prefix = rep_dir_prefix if rep_dir_prefix else None
+            # if rep path is a file, use its directory; if dir, use itself
+            if rep_meta and rep_meta["type"] == "file":
+                scope_prefix = os.path.dirname(unquote(rep_meta["path"]))
+            else:
+                scope_prefix = os.path.dirname(unquote(path)) if os.path.splitext(unquote(path))[1] else unquote(path)
 
-        # List .c/.h paths at the commit
         try:
             paths = list_tree_c_h_paths(owner, repo, commit_sha, token, scope_prefix)
         except Exception as e:
             print(f"[{stu}] tree list failed: {e}", file=sys.stderr)
-            continue
+            paths = []
 
-        if not paths:
-            print(f"[{stu}] No .c/.h files found at commit {commit_sha} (scope={args.scope}).")
-            continue
-
-        # Stage all .c/.h files under student's directory (preserve subdirs)
         staged_count = 0
         for p in paths:
+            # Deduplicate: skip representative path if we already created a main.c copy for it
+            if p in skip_paths:
+                continue
+
             p_enc = _encode_path_preserving_segments(p)
             raw_p = f"https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/{p_enc}"
             try:
@@ -277,33 +324,18 @@ def main():
                 continue
 
             if args.preserve_subdirs:
-                local_path = os.path.join(suite_dir, stu, p)  # keep original subdir
+                local_path = os.path.join(suite_dir, stu, p)
             else:
-                # flatten into student root
                 local_path = os.path.join(suite_dir, stu, os.path.basename(unquote(p)))
 
             safe_write(local_path, data)
             staged_count += 1
 
-        # Optionally duplicate the representative file as main.c at student root
-        rep_basename = os.path.basename(unquote(path))
-        if args.rename_to and rep_basename.lower() != args.rename_to.lower():
-            # Fetch the representative file at the chosen commit and copy as rename_to
-            rep_path_for_raw = _encode_path_preserving_segments(unquote(path))
-            rep_raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/{rep_path_for_raw}"
-            try:
-                rep_data = fetch_raw(rep_raw_url, token)
-                main_target = os.path.join(suite_dir, stu, args.rename_to)
-                safe_write(main_target, rep_data)
-                if args.keep_original:
-                    orig_target = os.path.join(suite_dir, stu, rep_basename)
-                    # If not already saved at root, write a copy
-                    if not os.path.exists(orig_target):
-                        safe_write(orig_target, rep_data)
-            except Exception as e:
-                print(f"[{stu}] failed to save representative as {args.rename_to}: {e}", file=sys.stderr)
+        if not rep_saved and not paths:
+            print(f"[{stu}] No representative file or .c/.h found at commit {commit_sha}; skipping student.")
+            continue
 
-        print(f"[{stu}] staged {staged_count} files under {os.path.join(suite_dir, stu)}")
+        print(f"[{stu}] staged {staged_count} additional .c/.h under {os.path.join(suite_dir, stu)}")
         staged_students += 1
 
     print(f"Staged students: {staged_students}, Suite: {args.suite}, Root: {suite_dir}")
