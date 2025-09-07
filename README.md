@@ -1,18 +1,35 @@
+좋습니다. 지금까지 만든 시스템을 한 눈에 보실 수 있게 README를 정리해 드리겠습니다.
+
+---
+
 # C Grader
 
-> C code compile and grading software
+> 학생들의 C 과제를 GitHub에서 자동으로 수집하여 **컴파일 → 실행 → 채점 리포트 생성**까지 수행하는 도구
 
-## 개요
+---
 
-이 프로젝트는 학생들이 GitHub에 제출한 C 과제를 자동으로 가져와 **컴파일 → 테스트케이스 실행 → 채점 결과 리포트 생성**까지 한 번에 처리하는 도구입니다.
-다음과 같은 기능들을 제공합니다:
+## 주요 기능
 
-* GitHub에서 학생별 제출 코드를 자동으로 크롤링
-* 특정 시한(`limit`) 이전 커밋까지만 인정하여 채점
-* Docker 컨테이너 내부에서 GCC로 안전하게 컴파일 및 실행
-* 테스트케이스(JSON) 기반 자동 채점
-* 학생별 JSON 리포트 + 전체 요약 테이블 생성
-* 표/엑셀에서 복사한 제출현황 텍스트를 student\_map.json으로 변환
+* **GitHub 제출 코드 자동 수집**
+
+  * `student_map.json` 기반
+  * `limit` 시한 이전 커밋까지만 인정
+* **Docker 격리 환경에서 안전하게 채점**
+
+  * GCC 컴파일 및 실행
+  * 자원 제한(CPU, 메모리, 네트워크 차단 등) 가능
+* **자동 채점**
+
+  * 테스트케이스(JSON) 입력 → 기대 출력과 비교
+  * 학생별 JSON 리포트 + 전체 요약 생성
+* **제출현황 자동 변환**
+
+  * 엑셀/표 형태 텍스트 → `student_map.json` 생성
+  * 전각문자/한글 파일명도 자동 처리
+* **유사도 검사 지원**
+
+  * 제출 코드 간 문자열 기반 유사도 측정
+  * 표절 의심 케이스 탐지 가능
 
 ---
 
@@ -20,31 +37,31 @@
 
 ```
 .
-├── build.sh                 # Docker 이미지 빌드 스크립트
-├── dockerfile               # 채점 환경 Dockerfile
-├── run.sh                   # 크롤링 + 채점 전체 실행 스크립트
-├── run_tests.py             # 단일 소스코드 채점 러너
-├── fetch_and_stage.py       # student_map.json 기반 GitHub 코드 수집
+├── build.sh                 # Docker 이미지 빌드
+├── dockerfile               # 채점 환경 정의
+├── run.sh                   # 크롤링 + 채점 실행 스크립트
+├── run_tests.py             # 단일 소스코드 채점기
+├── fetch_and_stage.py       # GitHub 코드 수집기
 ├── make_student_map.py      # 제출현황 텍스트 → student_map.json 변환
+├── similarity_report.py     # 제출 코드 유사도 분석기
 ├── data
 │   └── hw-test
-│       ├── tests.json       # 테스트케이스 (입력/출력 기대값)
-│       └── student_map.json # 학생 ID, URL, limit 정보
-├── reports
-│   └── hw-test              # 학생별 리포트(JSON) 저장
-└── README.md
+│       ├── tests.json       # 테스트케이스
+│       └── student_map.json # 학생 제출 정보
+└── reports
+    └── hw-test              # 학생별 리포트 저장
 ```
 
 ---
 
-## 주요 구성요소 설명
+## 주요 구성 요소
 
 ### 1. Dockerfile
 
-* Debian slim 기반
-* `build-essential`(gcc, libc-dev 등) + Python3 설치
-* 기본 실행 엔트리포인트는 `python3 run_tests.py`
-* 컨테이너 내부에서만 채점을 수행하므로 안전합니다.
+* 기반: Debian slim
+* 포함: `gcc`, `make`, `libc-dev`, `python3`
+* 엔트리포인트: `python3 run_tests.py`
+* 목적: 학생 코드 실행을 **격리/안전**하게 수행
 
 ### 2. build.sh
 
@@ -53,54 +70,43 @@
 docker build -t c-stdin-tester -f dockerfile .
 ```
 
-* 채점용 Docker 이미지를 빌드합니다.
+* 채점용 Docker 이미지 빌드
 
 ### 3. run\_tests.py
 
-* 단일 C 소스(`main.c`)와 테스트 JSON(`tests.json`)을 입력받아:
+* 단일 학생 소스 코드 채점
+* 기능:
 
   1. GCC로 컴파일
-  2. 각 테스트케이스(stdin 입력 제공) 실행
-  3. 프로그램 출력과 기대 출력 비교
-  4. 결과 요약 및 JSON 리포트 작성
-* 옵션
+  2. 테스트케이스(stdin 입력 제공) 실행
+  3. 출력 비교
+  4. JSON 리포트 작성
+* 옵션:
 
-  * `--src`: 소스 파일 경로
-  * `--tests`: 테스트케이스 JSON
-  * `--report`: 결과 리포트 파일(JSON)
-  * `--summarize-dir`: 다수 리포트를 요약 테이블로 출력
-
-테스트 JSON 예시:
-
-```json
-[
-  {"name": "case1", "stdin": "1 2\n", "expected": "3\n"},
-  {"name": "case2", "stdin": "10 20\n", "expected": "30\n"}
-]
-```
+  * `--src-dir`: 소스 폴더
+  * `--tests`: 테스트 JSON
+  * `--report`: 결과 저장 경로
+  * `--summarize-dir`: 여러 리포트 요약
 
 ### 4. run.sh
 
-* 지정한 과제 폴더(`data/hw-test`)와 `student_map.json`을 입력받아:
+* 전체 채점 파이프라인 자동화
 
-  1. `fetch_and_stage.py` 실행 → 각 학생의 main.c 다운로드
-  2. Docker 컨테이너에서 `run_tests.py` 실행 → 학생별 채점
-  3. `reports/hw-test/`에 JSON 리포트 생성
-  4. 전체 요약 테이블 출력
-* 실행 예:
-
-```bash
-./run.sh hw-test data/hw-test/student_map.json
-```
+1. `fetch_and_stage.py` 실행 → GitHub에서 소스코드 수집
+2. Docker 실행 → 학생별 채점
+3. 결과를 `reports/<suite>/`에 저장
+4. 요약 테이블 출력
 
 ### 5. fetch\_and\_stage.py
 
-* `student_map.json`에 따라 GitHub에서 코드를 내려받습니다.
-* 기능:
+* GitHub에서 학생 제출 코드를 다운로드
+* 특징:
 
-  * `blob`/`raw` URL을 `raw.githubusercontent.com` 주소로 변환
-  * 파일명이 한글/공백/특수문자일 경우 안전하게 인코딩
-  * `limit` 값이 있으면 GitHub API로 해당 시각 이전 마지막 커밋을 찾아서 그 버전만 다운로드
+  * blob/raw URL 처리
+  * 한글/특수문자 파일명 안전 처리
+  * `limit` 이전 마지막 커밋만 수집
+  * 대표 파일(`main.c`가 아닐 수도 있음)도 반드시 보존
+  * `.c`, `.h` 파일 전체 수집
 * 실행 예:
 
 ```bash
@@ -114,9 +120,8 @@ python3 fetch_and_stage.py \
 
 ### 6. make\_student\_map.py
 
-* 제출현황 텍스트(엑셀에서 복사한 표 형태/기본적으로 계명대학교 과제평가의 `엑셀 다운로드` 내용을 복사한 것과 동일)에서 학생 ID와 GitHub URL을 추출하여 `student_map.json` 생성.
-* URL이 전각문자(`ＨＴＴＰＳ ://...`)로 깨져도 자동 정규화.
-* `.c`/`.cpp` 파일 링크만 우선 선택.
+* 제출현황 표(엑셀 → 텍스트)에서 student\_map.json 생성
+* 자동으로 ID와 GitHub URL 추출
 * 실행 예:
 
 ```bash
@@ -127,7 +132,19 @@ python3 make_student_map.py table.txt \
   -o data/hw-test/student_map.json
 ```
 
-### 7. student\_map.json 형식
+### 7. similarity\_report.py
+
+* 폴더 내 모든 학생 코드 비교
+* 학생별 "가장 유사한 다른 코드"와 유사도 점수 산출
+* 실행 예:
+
+```bash
+python3 similarity_report.py data/hw-test -o reports/hw-test/sim.json
+```
+
+---
+
+## student\_map.json 예시
 
 ```json
 {
@@ -147,36 +164,7 @@ python3 make_student_map.py table.txt \
 
 ---
 
-## 채점 프로세스 흐름
-
-1. 교수자가 제출현황 표를 엑셀 → 텍스트로 추출
-2. `make_student_map.py`로 student\_map.json 생성
-3. `run.sh` 실행 시 `fetch_and_stage.py`가 GitHub에서 소스를 다운로드
-
-   * `limit` 이전 커밋만 인정
-4. Docker 컨테이너 안에서 `run_tests.py`가 채점 수행
-5. 학생별 리포트(JSON) 저장 + 전체 요약 출력
-
----
-
-## 보안 고려
-
-* 학생 코드는 반드시 **Docker 컨테이너 내부에서만 실행**
-* 필요 시 `--network=none --memory=256m --cpus=1.0` 등 옵션으로 실행 자원 제한
-* 실행 타임아웃 기본 2초, 무한루프 방지
-
----
-
-## 확장 아이디어
-
-* 결과를 CSV/엑셀로 내보내기
-* GitHub Classroom API 연동
-* 테스트케이스 정규식/부동소수 비교 지원
-* UI 대시보드로 시각화
-
----
-
-## 실행 요약
+## 실행 절차
 
 ### 1. Docker 이미지 빌드
 
@@ -184,15 +172,14 @@ python3 make_student_map.py table.txt \
 ./build.sh
 ```
 
-### 2. student_map.json 생성
+### 2. student\_map.json 생성
 
 ```bash
 python3 make_student_map.py \
   data/hw-test/table.txt \
-  --limit 2025-09-09T00:00:00Z \
+  --limit 2025-09-09T00:00:00+09:00 \
   --only-submitted \
   --pretty \
-  --include-nonfile \
   -o data/hw-test/student_map.json
 ```
 
@@ -202,14 +189,36 @@ python3 make_student_map.py \
 ./run.sh data/hw-test
 ```
 
----
-
-## 유사도 검사
-
-필요에 따라 유사도 검사 가능
+GitHub API rate limit 회피를 위해 토큰 사용 가능:
 
 ```bash
-python3 similarity_report.py \ 
-  data/hw-test \                
-  -o reports/hw-01/sim.json
+GITHUB_TOKEN=ghp_xxx ./run.sh data/hw-test
 ```
+
+### 4. 유사도 검사(선택)
+
+```bash
+python3 similarity_report.py data/hw-test -o reports/hw-test/sim.json
+```
+
+---
+
+## 보안/제한 설정
+
+* 반드시 **Docker 컨테이너 내부**에서만 코드 실행
+* 옵션 예시:
+
+  * `--network=none`
+  * `--cpus=1.0`
+  * `--memory=256m`
+  * `--timeout=2.0`
+* 무한 루프/자원 과다 사용 방지
+
+---
+
+## 확장 아이디어
+
+* CSV/엑셀 결과 내보내기
+* GitHub Classroom API 연동
+* 부동소수/정규식 출력 비교
+* 웹 UI 대시보드 시각화
