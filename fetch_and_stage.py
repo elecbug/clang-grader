@@ -17,10 +17,20 @@ from datetime import datetime, timezone
 # Regex for GitHub URL forms
 # ---------------------------
 BLOB_RE = re.compile(
-    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/blob/(?P<branch>[^/]+)/(?P<path>.+)$"
+    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/blob/(?P<branch>[^/]+)/(?P<path>.+)$",
+    re.IGNORECASE
 )
 RAW_RE = re.compile(
-    r"^https?://raw\.githubusercontent\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?P<branch>[^/]+)/(?P<path>.+)$"
+    r"^https?://raw\.githubusercontent\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?P<branch>[^/]+)/(?P<path>.+)$",
+    re.IGNORECASE
+)
+TREE_RE = re.compile(
+    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/tree/(?P<branch>[^/]+)(?:/(?P<path>.*))?$",
+    re.IGNORECASE
+)
+REPO_RE = re.compile(
+    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/?$",
+    re.IGNORECASE
 )
 
 # ---------------------------
@@ -37,7 +47,11 @@ def _encode_path_preserving_segments(path: str) -> str:
 def to_raw_parts(url: str):
     url = _nfkc(url).strip()
     parts = urlsplit(url)
+    # Keep original path but drop query/fragment; matching is case-insensitive by regex flags
     clean_url = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+    if clean_url.endswith(".git"):
+        clean_url = clean_url[:-4]  # strip .git
 
     m = BLOB_RE.match(clean_url)
     if m:
@@ -60,6 +74,23 @@ def to_raw_parts(url: str):
         raw_norm = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path_enc}"
         filename = os.path.basename(unquote(path))
         return owner, repo, branch, path, raw_norm, filename
+
+    m = TREE_RE.match(clean_url)
+    if m:
+        owner  = m.group("owner")
+        repo   = m.group("repo")
+        branch = m.group("branch")
+        path   = m.group("path") or ""   # may be None if tree root
+        # For directories there is no single raw file URL or filename
+        return owner, repo, branch, path, None, ""
+
+    m = REPO_RE.match(clean_url)
+    if m:
+        owner = m.group("owner")
+        repo  = m.group("repo")
+        branch = None   # will be resolved by API (default_branch)
+        path   = ""     # repo root
+        return owner, repo, branch, path, None, ""
 
     if "github.com" in clean_url:
         raise ValueError(f"Unsupported GitHub URL shape: {url}")
@@ -167,6 +198,14 @@ def get_content_meta(owner: str, repo: str, path: str, ref: str, token: Optional
         return {"type": "dir", "path": path, "name": os.path.basename(unquote(path))}
     return None
 
+def get_default_branch(owner: str, repo: str, token: Optional[str]) -> str:
+    """Return repository default_branch by API."""
+    resp = gh_get(f"https://api.github.com/repos/{owner}/{repo}", token)
+    data = resp.json()
+    if "default_branch" not in data:
+        raise RuntimeError("default_branch not found")
+    return data["default_branch"]
+
 # ---------------------------
 # IO helpers
 # ---------------------------
@@ -187,6 +226,53 @@ def _write_main_hint(student_root: str, rel_main: str) -> None:
     os.makedirs(student_root, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(rel_main.strip() + "\n")
+
+MAIN_RE = re.compile(r'\bint\s+main\s*\(')
+
+def _has_main_function(local_path: str) -> bool:
+    """Return True if the local source contains a main() definition."""
+    try:
+        with open(local_path, 'r', encoding='utf-8', errors='ignore') as f:
+            return bool(MAIN_RE.search(f.read()))
+    except Exception:
+        return False
+
+def _pick_main_from_staged(student_root: str, scope_prefix: str, staged_paths: List[str], preserve_subdirs: bool) -> Optional[str]:
+    """
+    Decide representative main among staged .c files under a directory scope.
+    Priority:
+      1) '<scope_prefix>/main.c' if exists
+      2) The unique .c that contains main()
+    Returns a repo-relative path (matching staged relative layout) to write into .main_filename,
+    or None if no clear choice.
+    """
+    # Normalize scope ('' means repo root)
+    scope_prefix = (scope_prefix or "").strip("/")
+
+    # If scope is repo root, consider all .c files; otherwise filter under the prefix
+    if scope_prefix == "":
+        c_paths = [p for p in staged_paths if p.lower().endswith(".c")]
+    else:
+        c_paths = [p for p in staged_paths if p.lower().endswith(".c") and
+                   (p == scope_prefix or p.startswith(scope_prefix + "/"))]
+
+    # 1) Prefer explicit main.c at the scope
+    candidate_rel = f"{scope_prefix}/main.c" if scope_prefix else "main.c"
+    local_main = os.path.join(student_root, candidate_rel)
+    if os.path.isfile(local_main):
+        return candidate_rel
+
+    # 2) Otherwise, find the unique .c that defines main()
+    main_candidates: List[str] = []
+    for rel in c_paths:
+        local_path = os.path.join(student_root, rel)
+        if _has_main_function(local_path):
+            main_candidates.append(rel)
+
+    if len(main_candidates) == 1:
+        return main_candidates[0]
+
+    return None
 
 # ---------------------------
 # Main
@@ -242,6 +328,15 @@ def main():
         except Exception as e:
             print(f"[{stu}] URL parsing failed: {e}", file=sys.stderr)
             continue
+
+        if branch is None:
+            # repository root URL → resolve default branch
+            try:
+                branch = get_default_branch(owner, repo, token)
+                print(f"[{stu}] Using default branch '{branch}' (repo root URL)")
+            except Exception as e:
+                print(f"[{stu}] default branch lookup failed: {e}", file=sys.stderr)
+                continue
 
         student_root = os.path.join(suite_dir, stu)
 
@@ -313,9 +408,21 @@ def main():
                     print(f"[{stu}] representative fetch failed: {e}", file=sys.stderr)
                     rep_saved = False
 
+        # If representative URL points to a directory, force the scope to that directory
+        dir_scope_prefix: Optional[str] = None
+        if rep_meta and rep_meta["type"] == "dir":
+            # directory URL like /tree/<branch>/<path>
+            dir_scope_prefix = unquote(path).strip("/")  # may be ""
+        elif rep_meta is None and path == "":
+            # repository root URL → treat as directory scope at repo root
+            dir_scope_prefix = ""  # empty = repo root
+
         # 2) Then fetch .c/.h by scope (repo/dir)
         scope_prefix = None
-        if args.scope == "dir":
+        if dir_scope_prefix is not None:
+            # Directory URL → force scope to that directory
+            scope_prefix = dir_scope_prefix
+        elif args.scope == "dir":
             # if rep path is a file, use its directory; if dir, use itself
             if rep_meta and rep_meta["type"] == "file":
                 scope_prefix = os.path.dirname(unquote(rep_meta["path"]))
@@ -349,6 +456,22 @@ def main():
 
             safe_write(local_path, data)
             staged_count += 1
+
+        # After staging files, if this was a directory URL, auto-pick main and write hint
+        if dir_scope_prefix is not None:
+            picked = _pick_main_from_staged(
+                student_root=student_root,
+                scope_prefix=dir_scope_prefix,   # "" for repo root
+                staged_paths=paths,
+                preserve_subdirs=args.preserve_subdirs
+            )
+            if picked:
+                _write_main_hint(student_root, picked)
+                print(f"[{stu}] directory-scope main selected: {picked}")
+            else:
+                # If you prefer a default, uncomment next line
+                # _write_main_hint(student_root, "main.c")
+                print(f"[{stu}] directory-scope main not determined (no unique main).")
 
         if not rep_saved and not paths:
             print(f"[{stu}] No representative file or .c/.h found at commit {commit_sha}; skipping student.")
