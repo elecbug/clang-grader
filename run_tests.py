@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -11,6 +12,60 @@ from typing import List, Union, Optional, Tuple
 # -------------------------------
 # Compile helpers
 # -------------------------------
+
+MAIN_PATTERN = re.compile(r'\bint\s+main\s*\(')
+
+def is_main_file(path: str) -> bool:
+    """Return True if the file contains a definition of int main(...)."""
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            return bool(MAIN_PATTERN.search(f.read()))
+    except Exception:
+        # If unreadable, let the compiler handle; treat as non-main here.
+        return False
+
+def collect_sources_with_single_main(src_dir: str, main_filename: str, recursive: bool = True) -> List[str]:
+    """
+    Collect .c sources under src_dir such that only `main_filename` provides main().
+    Any other .c that also defines main() will be skipped.
+    """
+    selected: List[str] = []
+    main_path = os.path.join(src_dir, main_filename)
+    if not os.path.isfile(main_path):
+        # Caller decides whether to error out or fallback
+        return selected
+
+    # Always include the representative main
+    selected.append(os.path.abspath(main_path))
+
+    # Walk and gather non-main .c files
+    if recursive:
+        for root, dirs, files in os.walk(src_dir):
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            for fn in files:
+                if not fn.endswith(".c"):
+                    continue
+                full = os.path.abspath(os.path.join(root, fn))
+                if full == os.path.abspath(main_path):
+                    continue
+                if is_main_file(full):
+                    # Skip extra mains
+                    print(f"[INFO] Skipping extra main in {full}")
+                    continue
+                selected.append(full)
+    else:
+        for fn in os.listdir(src_dir):
+            if not fn.endswith(".c"):
+                continue
+            full = os.path.abspath(os.path.join(src_dir, fn))
+            if full == os.path.abspath(main_path):
+                continue
+            if is_main_file(full):
+                print(f"[INFO] Skipping extra main in {full}")
+                continue
+            selected.append(full)
+
+    return selected
 
 def find_c_files(src_dir: str, recursive: bool = True) -> List[str]:
     """Collect .c files under src_dir (recursive by default)."""
@@ -188,7 +243,8 @@ def run_suite(
     timeout: float,
     strip_mode: str,
     normalize_newlines: bool,
-    case_sensitive: bool
+    case_sensitive: bool,
+    main_filename: str
 ) -> dict:
     """Compile then run all tests; return a structured report dict."""
     # Compilation
@@ -203,20 +259,17 @@ def run_suite(
         if not os.path.isdir(src_dir):
             raise SystemExit(f"Source directory not found: {src_dir}")
         include_dirs.append(src_dir)
-        c_files = find_c_files(src_dir, recursive=recursive)
 
         if allow_make and os.path.isfile(os.path.join(src_dir, "Makefile")):
+            # 기존 Makefile 경로는 그대로 유지
             rc, out, err = run_make(src_dir, env=None)
             comp_ok = (rc == 0)
             comp_err = None if comp_ok else (out + "\n" + err)
-            # If using make, assume resulting binary is at bin_out if exists; else warn
             if comp_ok and not os.path.exists(bin_out):
-                # Try to guess common outputs like a.out when bin_out missing
                 guess = os.path.join(src_dir, "a.out")
                 if os.path.exists(guess):
                     os.makedirs(os.path.dirname(bin_out), exist_ok=True)
                     try:
-                        # Copy the file as bin_out
                         import shutil
                         shutil.copy2(guess, bin_out)
                     except Exception as e:
@@ -226,15 +279,15 @@ def run_suite(
                     comp_ok = False
                     comp_err = f"Build succeeded but binary not found at {bin_out}"
         else:
+            # New: only include designated main + non-main .c files
+            c_files = collect_sources_with_single_main(src_dir, main_filename, recursive=recursive)
+
             if not c_files:
-                comp_err = f"No .c files found under {src_dir}"
+                comp_err = (f"Main file '{main_filename}' not found under {src_dir} "
+                            f"or no .c sources available.")
             else:
-                # Multiple-main guard (heuristic)
-                main_count, main_files = detect_multiple_mains(c_files)
-                if main_count > 1:
-                    comp_err = "Multiple 'main' functions detected:\n" + "\n".join(main_files)
-                else:
-                    comp_err = compile_c_multi(c_files, include_dirs, bin_out, cflags)
+                comp_err = compile_c_multi(c_files, include_dirs, bin_out, cflags)
+
             comp_ok = (comp_err is None)
 
     else:
@@ -366,6 +419,8 @@ def main():
 
     parser.add_argument("--report", help="Write a JSON report to this path (e.g., /work/reports/stu1.json)")
     parser.add_argument("--summarize-dir", help="Read *.json in this dir and print summary table")
+    parser.add_argument("--main-filename", default="main.c",
+                    help="Representative main source filename to include (default: main.c).")
 
     args = parser.parse_args()
 
@@ -390,7 +445,8 @@ def main():
         timeout=args.timeout,
         strip_mode=args.strip,
         normalize_newlines=args.normalize_newlines,
-        case_sensitive=args.case_sensitive
+        case_sensitive=args.case_sensitive,
+        main_filename=args.main_filename
     )
 
     # Human-readable console

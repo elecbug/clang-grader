@@ -175,6 +175,19 @@ def safe_write(path: str, data: bytes) -> None:
     with open(path, "wb") as f:
         f.write(data)
 
+# write main hint utility
+def _write_main_hint(student_root: str, rel_main: str) -> None:
+    """
+    Write the chosen main filename (relative to src_dir) so run.sh can pass it to run_tests.py.
+    Example values:
+      - "main.c"
+      - "Assignment/Assignment1/09.c"  (subdir allowed)
+    """
+    path = os.path.join(student_root, ".main_filename")
+    os.makedirs(student_root, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(rel_main.strip() + "\n")
+
 # ---------------------------
 # Main
 # ---------------------------
@@ -230,6 +243,8 @@ def main():
             print(f"[{stu}] URL parsing failed: {e}", file=sys.stderr)
             continue
 
+        student_root = os.path.join(suite_dir, stu)
+
         # Resolve commit
         if limit_dt is not None:
             commit_sha = get_repo_commit_before(owner, repo, branch, limit_dt, token)
@@ -263,6 +278,8 @@ def main():
                 rep_saved = False
                 # nothing added to skip_paths here; we want tree to stage it normally.
 
+                _write_main_hint(student_root, rep_rel)
+
             else:
                 # Case B) representative is not .c (or force-rename enabled)
                 # Fetch and save to student root as rename_to (e.g., main.c)
@@ -274,6 +291,8 @@ def main():
                     # always save as rename_to for compilation readiness
                     target_main = os.path.join(suite_dir, stu, args.rename_to)
                     safe_write(target_main, data)
+
+                    _write_main_hint(student_root, args.rename_to)
 
                     # optionally keep original name at root ONLY when it won't collide
                     # Note: to avoid multi-main, we do NOT write an extra .c at root if rep_is_c
@@ -287,7 +306,7 @@ def main():
                     rep_saved = True
 
                     # If we forced a duplicate of a .c (force-rename), then skip original path in tree
-                    if rep_is_c and args.force-rename:
+                    if rep_is_c and args.force_rename:
                         skip_paths.add(rep_rel)
 
                 except Exception as e:

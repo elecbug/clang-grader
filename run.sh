@@ -69,6 +69,12 @@ for d in "${stu_dirs[@]}"; do
   BIN_PATH="/work/data/${SUITE_NAME}/${stu_name}/a.out"
   REPORT_PATH="/work/reports/${SUITE_NAME}/${stu_name}.json"
 
+  MAIN_HINT_PATH="${d}/.main_filename"
+  MAIN_FILE="main.c"
+  if [[ -f "${MAIN_HINT_PATH}" ]]; then
+    MAIN_FILE="$(tr -d '\r' < "${MAIN_HINT_PATH}" | sed 's/[[:space:]]*$//')"
+  fi
+
   set +e
   sudo docker run --rm \
     -v "${WORK_DIR}:/work:rw" \
@@ -84,6 +90,7 @@ for d in "${stu_dirs[@]}"; do
       --bin "${BIN_PATH}" \
       --timeout 2.0 \
       --normalize-newlines \
+      --main-filename "${MAIN_FILE}" \
       --report "${REPORT_PATH}"
   rc=$?
   set -e
