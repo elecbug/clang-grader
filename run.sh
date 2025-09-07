@@ -56,8 +56,9 @@ python3 "${WORK_DIR}/fetch_and_stage.py" \
   --suite "${SUITE_NAME}" \
   --data-root "${WORK_DIR}/data" \
   --rename-to "main.c" \
-  --keep-original \
+  --scope "dir" \
   --hash-check \
+  --preserve-subdirs \
   --respect-limit || {
     echo "Fetch step failed."
     exit 1
@@ -97,7 +98,7 @@ for d in "${stu_dirs[@]}"; do
     -v "${WORK_DIR}:/work" \
     "${IMAGE_NAME}" \
       --suite-name "${stu_name}" \
-      --src "/work/data/${SUITE_NAME}/${stu_name}/main.c" \
+      --src-dir "/work/data/${SUITE_NAME}/${stu_name}" \
       --tests "/work/data/${SUITE_NAME}/tests.json" \
       --bin "${BIN_PATH}" \
       --timeout 2.0 \

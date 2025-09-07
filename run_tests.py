@@ -6,20 +6,80 @@ import shlex
 import subprocess
 import sys
 import textwrap
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Tuple
 
-def compile_c(src: str, bin_out: str, cflags: str) -> Optional[str]:
-    """Compile the given C source into an executable.
-    Returns None on success, or the compiler stderr text on failure.
-    """
+# -------------------------------
+# Compile helpers
+# -------------------------------
+
+def find_c_files(src_dir: str, recursive: bool = True) -> List[str]:
+    """Collect .c files under src_dir (recursive by default)."""
+    c_files = []
+    if recursive:
+        for root, dirs, files in os.walk(src_dir):
+            # Skip hidden dirs like .git
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            for fn in files:
+                if fn.endswith(".c"):
+                    c_files.append(os.path.join(root, fn))
+    else:
+        for fn in os.listdir(src_dir):
+            if fn.endswith(".c"):
+                c_files.append(os.path.join(src_dir, fn))
+    return c_files
+
+def detect_multiple_mains(c_files: List[str]) -> Tuple[int, List[str]]:
+    """Light-weight detection of multiple 'main' definitions to warn/fail early."""
+    import re
+    main_re = re.compile(r'\bint\s+main\s*\(')
+    hits = []
+    for f in c_files:
+        try:
+            with open(f, 'r', encoding='utf-8', errors='ignore') as fh:
+                src = fh.read()
+            if main_re.search(src):
+                hits.append(f)
+        except Exception:
+            # If cannot read, ignore here; compiler will fail anyway
+            pass
+    return (len(hits), hits)
+
+def run_make(src_dir: str, env: Optional[dict] = None) -> Tuple[int, str, str]:
+    """Run 'make' in the student directory if requested."""
+    proc = subprocess.run(
+        ["make", "-C", src_dir],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+def compile_c_single(src: str, bin_out: str, cflags: str) -> Optional[str]:
+    """Compile single C source into an executable. Return stderr text on failure."""
     cmd = ["gcc"] + shlex.split(cflags) + ["-o", bin_out, src]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if proc.returncode != 0:
         return (proc.stdout or "") + (proc.stderr or "")
     return None
 
+def compile_c_multi(c_files: List[str], include_dirs: List[str], bin_out: str, cflags: str) -> Optional[str]:
+    """Compile multiple C sources with include dirs."""
+    cmd = ["gcc"] + shlex.split(cflags)
+    for inc in include_dirs:
+        cmd.extend(["-I", inc])
+    cmd.extend(c_files)
+    cmd.extend(["-o", bin_out])
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if proc.returncode != 0:
+        return (proc.stdout or "") + (proc.stderr or "")
+    return None
+
+# -------------------------------
+# Test harness (unchanged core)
+# -------------------------------
+
 def read_tests(tests_path: str) -> List[dict]:
-    """Load tests from a JSON file."""
     with open(tests_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, list):
@@ -34,7 +94,6 @@ def read_tests(tests_path: str) -> List[dict]:
     return data
 
 def normalize(s: str, strip_mode: str, normalize_newlines: bool) -> str:
-    """Normalize output for comparison."""
     if normalize_newlines:
         s = s.replace("\r\n", "\n").replace("\r", "\n")
     if strip_mode == "left":
@@ -50,7 +109,6 @@ def normalize(s: str, strip_mode: str, normalize_newlines: bool) -> str:
     return s
 
 def run_one(bin_path: str, stdin_data: str, timeout: float) -> subprocess.CompletedProcess:
-    """Execute binary with given stdin and timeout, capturing stdout/stderr."""
     return subprocess.run(
         [bin_path],
         input=stdin_data,
@@ -61,7 +119,6 @@ def run_one(bin_path: str, stdin_data: str, timeout: float) -> subprocess.Comple
     )
 
 def diff_block(expected: str, got: str) -> str:
-    """Prepare a compact diff-like block for human readability."""
     exp_vis = expected.replace("\n", "\\n\n")
     got_vis = got.replace("\n", "\\n\n")
     return textwrap.dedent(f"""
@@ -72,7 +129,6 @@ def diff_block(expected: str, got: str) -> str:
     """).rstrip()
 
 def write_report(report_path: str, payload: dict) -> None:
-    """Write JSON report to a path (ensuring parent directory exists)."""
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
@@ -85,9 +141,6 @@ def load_report(path: str) -> Optional[dict]:
         return None
 
 def summarize_dir(dir_path: str) -> int:
-    """Read all *.json reports and print a human-friendly summary table.
-    Returns 0 on success.
-    """
     if not os.path.isdir(dir_path):
         print(f"Report directory not found: {dir_path}")
         return 1
@@ -96,7 +149,6 @@ def summarize_dir(dir_path: str) -> int:
         print(f"No reports found in {dir_path}")
         return 1
 
-    # Prepare a table-like output
     print(f"{'Student':<20} {'Pass':>4} {'Total':>5} {'Result'}")
     print("-" * 50)
     overall_total = 0
@@ -126,7 +178,10 @@ def summarize_dir(dir_path: str) -> int:
 
 def run_suite(
     suite_name: str,
-    src: str,
+    src: Optional[str],
+    src_dir: Optional[str],
+    recursive: bool,
+    allow_make: bool,
     tests_path: str,
     bin_out: str,
     cflags: str,
@@ -137,14 +192,62 @@ def run_suite(
 ) -> dict:
     """Compile then run all tests; return a structured report dict."""
     # Compilation
-    if not os.path.exists(src):
-        raise SystemExit(f"Source file not found: {src}")
+    comp_ok = False
+    comp_err: Optional[str] = None
 
-    comp_err = compile_c(src, bin_out, cflags)
+    # If src_dir is provided, prefer that path and compile all C files
+    include_dirs: List[str] = []
+    c_files: List[str] = []
+
+    if src_dir:
+        if not os.path.isdir(src_dir):
+            raise SystemExit(f"Source directory not found: {src_dir}")
+        include_dirs.append(src_dir)
+        c_files = find_c_files(src_dir, recursive=recursive)
+
+        if allow_make and os.path.isfile(os.path.join(src_dir, "Makefile")):
+            rc, out, err = run_make(src_dir, env=None)
+            comp_ok = (rc == 0)
+            comp_err = None if comp_ok else (out + "\n" + err)
+            # If using make, assume resulting binary is at bin_out if exists; else warn
+            if comp_ok and not os.path.exists(bin_out):
+                # Try to guess common outputs like a.out when bin_out missing
+                guess = os.path.join(src_dir, "a.out")
+                if os.path.exists(guess):
+                    os.makedirs(os.path.dirname(bin_out), exist_ok=True)
+                    try:
+                        # Copy the file as bin_out
+                        import shutil
+                        shutil.copy2(guess, bin_out)
+                    except Exception as e:
+                        comp_ok = False
+                        comp_err = f"Build succeeded but cannot stage binary: {e}"
+                else:
+                    comp_ok = False
+                    comp_err = f"Build succeeded but binary not found at {bin_out}"
+        else:
+            if not c_files:
+                comp_err = f"No .c files found under {src_dir}"
+            else:
+                # Multiple-main guard (heuristic)
+                main_count, main_files = detect_multiple_mains(c_files)
+                if main_count > 1:
+                    comp_err = "Multiple 'main' functions detected:\n" + "\n".join(main_files)
+                else:
+                    comp_err = compile_c_multi(c_files, include_dirs, bin_out, cflags)
+            comp_ok = (comp_err is None)
+
+    else:
+        # Single-file mode
+        if not src or not os.path.exists(src):
+            raise SystemExit(f"Source file not found: {src}")
+        comp_err = compile_c_single(src, bin_out, cflags)
+        comp_ok = (comp_err is None)
+
     report = {
         "suite_name": suite_name,
         "compilation": {
-            "ok": comp_err is None,
+            "ok": comp_ok,
             "error": comp_err or ""
         },
         "tests": [],
@@ -154,11 +257,11 @@ def run_suite(
         }
     }
 
-    # If compilation failed, return immediately (no tests executed)
-    if comp_err is not None:
+    # Stop if compilation failed
+    if not comp_ok:
         return report
 
-    # Load tests and execute
+    # Load and run tests
     tests = read_tests(tests_path)
     total = len(tests)
     passed = 0
@@ -229,17 +332,30 @@ def run_suite(
     report["summary"]["passed"] = passed
     return report
 
+# -------------------------------
+# CLI
+# -------------------------------
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Compile a C file with gcc and run stdin-based tests from JSON. Also supports cross-student summary."
+        description="Compile a C submission (single file or directory) and run stdin-based tests from JSON."
     )
-    # Mode A: run one suite (student)
-    parser.add_argument("--suite-name", default="suite", help="Label shown in reports (e.g., student folder name)")
+
+    # Modes
+    parser.add_argument("--suite-name", default="suite", help="Label in reports (e.g., student folder name)")
+
+    # Single-file mode
     parser.add_argument("--src", help="Path to C source file")
+
+    # Multi-file mode
+    parser.add_argument("--src-dir", help="Path to a directory containing C sources/headers")
+    parser.add_argument("--no-recursive", action="store_true", help="Do not search subdirectories")
+    parser.add_argument("--allow-make", action="store_true", help="If Makefile exists under src-dir, run 'make' instead of gcc")
+
     parser.add_argument("--tests", help="Path to JSON tests file")
     parser.add_argument("--bin", default=os.environ.get("BIN_OUT", "/work/a.out"), help="Output binary path")
     parser.add_argument("--cflags", default=os.environ.get("CFLAGS", "-O2 -std=c17 -Wall -Wextra"),
-                        help='CFLAGS passed to gcc')
+                        help="CFLAGS passed to gcc")
     parser.add_argument("--timeout", type=float, default=2.0, help="Per-test timeout (seconds)")
     parser.add_argument("--strip", choices=["none","left","right","both"], default="right",
                         help="Whitespace normalization for comparison (default: right)")
@@ -249,9 +365,7 @@ def main():
                         help="Enable case-sensitive comparison")
 
     parser.add_argument("--report", help="Write a JSON report to this path (e.g., /work/reports/stu1.json)")
-
-    # Mode B: summarize directory of JSON reports
-    parser.add_argument("--summarize-dir", help="If set, read *.json in this dir and print summary table")
+    parser.add_argument("--summarize-dir", help="Read *.json in this dir and print summary table")
 
     args = parser.parse_args()
 
@@ -259,13 +373,17 @@ def main():
     if args.summarize_dir:
         sys.exit(summarize_dir(args.summarize_dir))
 
-    # Run-one-suite mode requires src & tests
-    if not args.src or not args.tests:
-        parser.error("--src and --tests are required unless using --summarize-dir")
+    # Require either src or src-dir
+    if not args.src and not args.src_dir:
+        parser.error("Either --src or --src-dir must be provided.")
 
+    # Run suite
     report = run_suite(
         suite_name=args.suite_name,
         src=args.src,
+        src_dir=args.src_dir,
+        recursive=(not args.no_recursive),
+        allow_make=args.allow_make,
         tests_path=args.tests,
         bin_out=args.bin,
         cflags=args.cflags,
@@ -275,13 +393,12 @@ def main():
         case_sensitive=args.case_sensitive
     )
 
-    # Human-readable console tail
+    # Human-readable console
     print(f"\n=== SUITE: {report['suite_name']} ===")
     comp_ok = report["compilation"]["ok"]
     if not comp_ok:
         print("✘ COMPILATION FAILED")
         print(report["compilation"]["error"])
-        # Write report if requested, exit code 1 for failure
         if args.report:
             write_report(args.report, report)
         sys.exit(1)
@@ -305,11 +422,9 @@ def main():
 
     print(f"Passed {passed}/{total} tests")
 
-    # Persist report if requested
     if args.report:
         write_report(args.report, report)
 
-    # Exit code: 0 only when all pass
     sys.exit(0 if passed == total else 1)
 
 if __name__ == "__main__":
