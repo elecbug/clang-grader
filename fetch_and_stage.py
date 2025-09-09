@@ -36,6 +36,39 @@ REPO_RE = re.compile(
 # ---------------------------
 # Helpers
 # ---------------------------
+
+def _ensure_student_root(student_root: str) -> None:
+    """Make sure the student's root directory exists."""
+    os.makedirs(student_root, exist_ok=True)
+
+def _write_submission_meta(student_root: str, meta: dict) -> None:
+    """Append/merge submission meta sidecar to be consumed by run_tests.py."""
+    _ensure_student_root(student_root)
+    path = os.path.join(student_root, ".submission_meta.json")
+    try:
+        cur = {}
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                cur = json.load(f)
+        cur.update(meta)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False, indent=2)
+    except Exception:
+        # Do not block the pipeline on meta write failure
+        pass
+
+def _record_failure(student_root: str, stu: str, url: str, status: str, reason: str, detail: Optional[str] = None) -> None:
+    """Standardize failure record and print a one-line console message."""
+    payload = {
+        "submitted_url": url,
+        "status": status,          # e.g., 'url_parse_failed', 'default_branch_failed', ...
+        "failure_reason": reason,
+    }
+    if detail:
+        payload["detail"] = str(detail)[:500]
+    _write_submission_meta(student_root, payload)
+    print(f"[{stu}] ERROR {status}: {reason}")
+
 def _nfkc(s: str) -> str:
     return unicodedata.normalize("NFKC", s)
 
@@ -326,7 +359,13 @@ def main():
         try:
             owner, repo, branch, path, _, _ = to_raw_parts(url)
         except Exception as e:
-            print(f"[{stu}] URL parsing failed: {e}", file=sys.stderr)
+            student_root = os.path.join(suite_dir, stu)
+            _record_failure(
+                student_root, stu, url,
+                status="url_parse_failed",
+                reason="Unrecognized or unsupported GitHub URL",
+                detail=str(e),
+            )
             continue
 
         if branch is None:
@@ -335,7 +374,13 @@ def main():
                 branch = get_default_branch(owner, repo, token)
                 print(f"[{stu}] Using default branch '{branch}' (repo root URL)")
             except Exception as e:
-                print(f"[{stu}] default branch lookup failed: {e}", file=sys.stderr)
+                student_root = os.path.join(suite_dir, stu)
+                _record_failure(
+                    student_root, stu, url,
+                    status="default_branch_failed",
+                    reason="Could not resolve default branch",
+                    detail=str(e),
+                )
                 continue
 
         student_root = os.path.join(suite_dir, stu)
@@ -345,10 +390,21 @@ def main():
             try:
                 commit_sha = get_repo_commit_before(owner, repo, branch, limit_dt, token)
             except Exception as e:
-                print(f"[{stu}] commit lookup failed: {e}", file=sys.stderr)
+                student_root = os.path.join(suite_dir, stu)
+                _record_failure(
+                    student_root, stu, url,
+                    status="commit_lookup_failed",
+                    reason="GitHub commits API error",
+                    detail=str(e),
+                )
                 continue
             if not commit_sha:
-                print(f"[{stu}] No commit on '{branch}' <= {limit_dt.isoformat()}, skipping.")
+                student_root = os.path.join(suite_dir, stu)
+                _record_failure(
+                    student_root, stu, url,
+                    status="no_commit_before_limit",
+                    reason=f"No commit on '{branch}' <= {limit_dt.isoformat()}",
+                )
                 continue
             print(f"[{stu}] Using commit {commit_sha} (<= {limit_dt.isoformat()})")
         else:
@@ -356,7 +412,12 @@ def main():
                 commit_sha = get_branch_head(owner, repo, branch, token)
                 print(f"[{stu}] Using branch HEAD {commit_sha}")
             except Exception as e:
-                print(f"[{stu}] HEAD lookup failed: {e}", file=sys.stderr)
+                _record_failure(
+                    student_root, stu, url,
+                    status="head_lookup_failed",
+                    reason="Could not resolve branch HEAD",
+                    detail=str(e),
+                )
                 continue
 
         # 1) Decide how to handle the representative path
@@ -393,6 +454,13 @@ def main():
 
                     _write_main_hint(student_root, args.rename_to)
 
+                    _write_submission_meta(student_root, {
+                        "submitted_url": url,
+                        "submitted_kind": "non_c_file",  # non_c_file | dir | repo
+                        "submitted_path": rep_rel,
+                        "saved_as": args.rename_to
+                    })
+
                     # optionally keep original name at root ONLY when it won't collide
                     # Note: to avoid multi-main, we do NOT write an extra .c at root if rep_is_c
                     if args.keep_original and not rep_is_c:
@@ -410,6 +478,12 @@ def main():
 
                 except Exception as e:
                     print(f"[{stu}] representative fetch failed: {e}", file=sys.stderr)
+                    _record_failure(
+                        student_root, stu, url,
+                        status="representative_fetch_failed",
+                        reason=f"Failed to fetch representative path '{rep_rel}'",
+                        detail=str(e),
+                    )
                     rep_saved = False
 
         # If representative URL points to a directory, force the scope to that directory
@@ -437,6 +511,12 @@ def main():
             paths = list_tree_c_h_paths(owner, repo, commit_sha, token, scope_prefix)
         except Exception as e:
             print(f"[{stu}] tree list failed: {e}", file=sys.stderr)
+            _record_failure(
+                student_root, stu, url,
+                status="tree_list_failed",
+                reason="Failed to enumerate repository tree",
+                detail=str(e),
+            )
             paths = []
 
         staged_count = 0
@@ -471,13 +551,27 @@ def main():
             )
             if picked:
                 _write_main_hint(student_root, picked)
+                _write_submission_meta(student_root, {
+                    "submitted_url": url,
+                    "submitted_kind": "dir" if rep_meta and rep_meta["type"] == "dir" else "repo",
+                    "auto_picked_main": picked
+                })
+
                 print(f"[{stu}] directory-scope main selected: {picked}")
             else:
-                # If you prefer a default, uncomment next line
-                # _write_main_hint(student_root, "main.c")
+                _record_failure(
+                    student_root, stu, url,
+                    status="auto_pick_main_failed",
+                    reason="Could not determine a unique main() under directory scope",
+                )
                 print(f"[{stu}] directory-scope main not determined (no unique main).")
 
         if not rep_saved and not paths:
+            _record_failure(
+                student_root, stu, url,
+                status="no_sources_found",
+                reason=f"No representative file or .c/.h found at commit {commit_sha}",
+            )
             print(f"[{stu}] No representative file or .c/.h found at commit {commit_sha}; skipping student.")
             continue
 

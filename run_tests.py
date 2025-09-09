@@ -15,6 +15,15 @@ from typing import List, Union, Optional, Tuple
 
 MAIN_PATTERN = re.compile(r'\bint\s+main\s*\(')
 
+def read_submission_meta(src_dir: str) -> dict:
+    """Read .submission_meta.json if present."""
+    path = os.path.join(src_dir, ".submission_meta.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
 def is_main_file(path: str) -> bool:
     """Return True if the file contains a definition of int main(...)."""
     try:
@@ -297,6 +306,15 @@ def run_suite(
         comp_err = compile_c_single(src, bin_out, cflags)
         comp_ok = (comp_err is None)
 
+    # Read submission meta sidecar and record the main used for build
+    submission_meta = {}
+    root_for_meta = src_dir if src_dir else (os.path.dirname(src) if src else None)
+    if root_for_meta and os.path.isdir(root_for_meta):
+        submission_meta = read_submission_meta(root_for_meta) or {}
+    # Always record which main file this run used
+    # Note: this is the relative path that run.sh passed via --main-filename
+    submission_meta.setdefault("selected_main", main_filename)
+
     report = {
         "suite_name": suite_name,
         "compilation": {
@@ -307,7 +325,8 @@ def run_suite(
         "summary": {
             "total": 0,
             "passed": 0,
-        }
+        },
+        "submission": submission_meta
     }
 
     # Stop if compilation failed
