@@ -342,7 +342,11 @@ def main():
 
         # Resolve commit
         if limit_dt is not None:
-            commit_sha = get_repo_commit_before(owner, repo, branch, limit_dt, token)
+            try:
+                commit_sha = get_repo_commit_before(owner, repo, branch, limit_dt, token)
+            except Exception as e:
+                print(f"[{stu}] commit lookup failed: {e}", file=sys.stderr)
+                continue
             if not commit_sha:
                 print(f"[{stu}] No commit on '{branch}' <= {limit_dt.isoformat()}, skipping.")
                 continue
