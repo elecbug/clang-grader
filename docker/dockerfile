@@ -10,9 +10,10 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-COPY run_tests.py /app/run_tests.py
+COPY grade_runner.py /app/grade_runner.py
+COPY grade_runner/ /app/grade_runner/
 
 ENV CFLAGS="-O2 -std=c17 -Wall -Wextra" \
     BIN_OUT="/work/a.out"
 
-ENTRYPOINT ["python3", "/app/run_tests.py"]
+ENTRYPOINT ["python3", "/app/grade_runner.py"]
