@@ -1,0 +1,4 @@
+연번	학과명	성명	아이디	제출여부	평가점수	제출횟수	제출일시	피드백	우수과제	과제설명
+1	컴퓨터공학과	홍길동	stu1	제출	0	1	2025-09-08 21:38	0	N	ＨＴＴＰＳ ://github.com/GildongHong/project1/blob/master/test-dir/code-01.c
+										
+										
