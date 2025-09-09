@@ -29,7 +29,7 @@
 ### 0. `table.txt` 준비
 
 - 과제란의 `엑셀 다운로드`를 통해 과제 제출 현황표를 다운로드
-- 타이틀을 제외한 전체 셀을 복사하여 `./docker/data/\<HOMEWORK_NUMBER]\>table.txt`에 저장
+- 타이틀을 제외한 전체 셀을 복사하여 `./docker/data/<HOMEWORK_NUMBER>table.txt`에 저장
 
 ### 1. Docker 이미지 빌드
 
