@@ -33,26 +33,29 @@
 
 ```
 .
-├── build.sh                 # Docker 이미지 빌드
-├── dockerfile               # 채점 환경 정의
-├── run.sh                   # 크롤링 + 채점 실행 스크립트
-├── run_tests.py             # 단일 소스코드 채점기
-├── fetch_and_stage.py       # GitHub 코드 수집기
-├── make_student_map.py      # 제출현황 텍스트 → student_map.json 변환
-├── similarity_report.py     # 제출 코드 유사도 분석기
-├── data
-│   └── hw-test
-│       ├── tests.json       # 테스트케이스
-│       └── student_map.json # 학생 제출 정보
-└── reports
-    └── hw-test              # 학생별 리포트 저장
+├── README.md
+├── LICENSE
+├── docs
+│   └── rule.md
+├── sh
+│   ├── build.sh
+│   ├── pre-run.sh
+│   ├── nonfetch-run.sh
+│   └── run.sh
+├── docker
+│   ├── dockerfile
+│   ├── fetch_and_stage.py
+│   └── run_tests.py
+└── script
+    ├── make_student_map.py
+    └── similarity_report.py
 ```
 
 ---
 
 ## 주요 구성 요소
 
-### 1. Dockerfile
+### 1. dockerfile
 
 * 기반: Debian slim
 * 포함: `gcc`, `make`, `libc-dev`, `python3`
@@ -63,7 +66,7 @@
 
 ```bash
 #!/usr/bin/env bash
-docker build -t c-stdin-tester -f dockerfile .
+docker build -t c-stdin-tester docker
 ```
 
 * 채점용 Docker 이미지 빌드
@@ -165,36 +168,32 @@ python3 similarity_report.py data/hw-test -o reports/hw-test/sim.json
 ### 1. Docker 이미지 빌드
 
 ```bash
-./build.sh
+./sh/build.sh
 ```
 
 ### 2. student\_map.json 생성
 
 ```bash
-python3 make_student_map.py \
-  data/hw-test/table.txt \
-  --limit 2025-09-09T00:00:00+09:00 \
-  --only-submitted \
-  --pretty \
-  -o data/hw-test/student_map.json
+./sh/pre-run.sh docker/data/hw-test/ 2025-09-09T00:00:00+09:00
 ```
 
 ### 3. 채점 실행
 
 ```bash
-./run.sh data/hw-test
+./sh/run.sh docker/data/hw-test
 ```
 
 GitHub API rate limit 회피를 위해 토큰 사용 가능:
 
 ```bash
-GITHUB_TOKEN=ghp_xxx ./run.sh data/hw-test
+GITHUB_TOKEN=ghp_xxx ./sh/run.sh docker/data/hw-test
 ```
 
 ### 4. 유사도 검사(선택)
 
 ```bash
-python3 similarity_report.py data/hw-test -o reports/hw-test/sim.json
+cd script
+python3 similarity_report.py ../docker/data/hw-test -o ../docker/reports/hw-test/similarity.json
 ```
 
 ---

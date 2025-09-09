@@ -5,5 +5,5 @@ set -euo pipefail
 IMAGE_NAME="c-stdin-tester"
 
 # Build using the local 'dockerfile'
-sudo docker build -t "${IMAGE_NAME}" -f dockerfile .
+sudo docker build -t "${IMAGE_NAME}" docker
 echo "Built image: ${IMAGE_NAME}"

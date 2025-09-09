@@ -10,8 +10,8 @@ set -euo pipefail
 
 IMAGE_NAME="c-stdin-tester"
 
-ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORK_DIR="${ROOT_DIR}"
+ROOT_DIR="$(pwd)"
+WORK_DIR="${ROOT_DIR}/docker"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <suite-folder or data/suite-folder>"
@@ -23,8 +23,8 @@ ARG_SUITE="$1"
 # Normalize suite
 CLEAN_SUITE="${ARG_SUITE#data/}"
 CLEAN_SUITE="${CLEAN_SUITE#./}"
-SUITE_NAME="${CLEAN_SUITE}"
-SUITE_DIR="${WORK_DIR}/data/${SUITE_NAME}"
+SUITE_NAME="$(basename "$CLEAN_SUITE")"
+SUITE_DIR="${ROOT_DIR}/docker/data/${SUITE_NAME}"
 TESTS_PATH="${SUITE_DIR}/tests.json"
 MAP_JSON="${SUITE_DIR}/student_map.json"
 
@@ -36,7 +36,7 @@ sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || { echo "Build image
 
 # 1) Fetch & stage (dir-scope; preserve subdirs; respect limit)
 # echo "========================================"
-# echo "Fetching sources using ${MAP_JSON} into ${SUITE_DIR}"
+# echo "Fetching sources using ${MAP_JSON} into ${SUITE_NAME}"
 # python3 "${WORK_DIR}/fetch_and_stage.py" \
 #   --map "${MAP_JSON}" \
 #   --suite "${SUITE_NAME}" \
