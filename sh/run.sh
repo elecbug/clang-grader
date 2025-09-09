@@ -37,7 +37,7 @@ sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || { echo "Build image
 # 1) Fetch & stage (dir-scope; preserve subdirs; respect limit)
 echo "========================================"
 echo "Fetching sources using ${MAP_JSON} into ${SUITE_NAME}"
-python3 "${WORK_DIR}/fetch_and_stage.py" \
+python3 "${WORK_DIR}/grade_fetcher.py" \
   --map "${MAP_JSON}" \
   --suite "${SUITE_NAME}" \
   --data-root "${WORK_DIR}/data" \

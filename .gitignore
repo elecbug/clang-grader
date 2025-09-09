@@ -57,3 +57,5 @@ dkms.conf
 temp/
 data/
 reports/
+
+__pycache__/
