@@ -32,6 +32,7 @@ REPO_RE = re.compile(
     r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/?$",
     re.IGNORECASE
 )
+MAIN_RE = re.compile(r'\bint\s+main\s*\(')
 
 # ---------------------------
 # Helpers
@@ -259,8 +260,6 @@ def _write_main_hint(student_root: str, rel_main: str) -> None:
     os.makedirs(student_root, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(rel_main.strip() + "\n")
-
-MAIN_RE = re.compile(r'\bint\s+main\s*\(')
 
 def _has_main_function(local_path: str) -> bool:
     """Return True if the local source contains a main() definition."""
