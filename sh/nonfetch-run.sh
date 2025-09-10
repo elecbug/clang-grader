@@ -26,12 +26,12 @@ CLEAN_SUITE="${CLEAN_SUITE#./}"
 SUITE_NAME="$(basename "$CLEAN_SUITE")"
 SUITE_DIR="${ROOT_DIR}/docker/data/${SUITE_NAME}"
 TESTS_PATH="${SUITE_DIR}/tests.json"
-MAP_JSON="${SUITE_DIR}/student_map.json"
+# MAP_JSON="${SUITE_DIR}/student_map.json"
 
 # Checks
 [[ -d "${SUITE_DIR}" ]] || { echo "Suite directory not found: ${SUITE_DIR}"; exit 1; }
 [[ -f "${TESTS_PATH}" ]] || { echo "tests.json not found: ${TESTS_PATH}"; exit 1; }
-[[ -f "${MAP_JSON}"  ]] || { echo "Mapping JSON not found: ${MAP_JSON}"; exit 1; }
+# [[ -f "${MAP_JSON}"  ]] || { echo "Mapping JSON not found: ${MAP_JSON}"; exit 1; }
 sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || { echo "Build image first: ./build.sh"; exit 1; }
 
 # 1) Fetch & stage (dir-scope; preserve subdirs; respect limit)
