@@ -184,6 +184,7 @@ class FetchService:
             # Parse URL → RepoRef
             try:
                 ref = parse_repo_url(url)
+                print(f"[{stu}] Parsed repo URL: {ref}")
             except Exception as e:
                 record_failure(student_root, url, Status.URL_PARSE_FAILED, "Unrecognized or unsupported GitHub URL", str(e))
                 continue

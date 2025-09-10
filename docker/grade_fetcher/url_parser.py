@@ -9,10 +9,22 @@ from typing import Optional
 from .models import RepoRef
 
 # --- Regex (kept compatible) ---
-BLOB_RE = re.compile( r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/blob/(?P<branch>[^/]+)/(?P<path>.+)$", re.IGNORECASE)
-RAW_RE = re.compile( r"^https?://raw\.githubusercontent\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?P<branch>[^/]+)/(?P<path>.+)$", re.IGNORECASE)
-TREE_RE = re.compile( r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/tree/(?P<branch>[^/]+)(?:/(?P<path>.*))?$", re.IGNORECASE)
-REPO_RE = re.compile( r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/?$", re.IGNORECASE)
+BLOB_RE = re.compile(
+    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/blob/(?P<branch>[^/]+)/(?P<path>.+)$",
+    re.IGNORECASE
+)
+RAW_RE = re.compile(
+    r"^https?://raw\.githubusercontent\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?P<branch>[^/]+)/(?P<path>.+)$",
+    re.IGNORECASE
+)
+TREE_RE = re.compile(
+    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/tree/(?P<branch>[^/]+)(?:/(?P<path>.*))?$",
+    re.IGNORECASE
+)
+REPO_RE = re.compile(
+    r"^https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/?$",
+    re.IGNORECASE
+)
 
 MAIN_RE = re.compile(r"\bint\s+main\s*\(")
 
@@ -36,8 +48,26 @@ def parse_repo_url(url: str) -> RepoRef:
     Supported shapes are identical to the legacy script: blob/raw/tree/repo root.
     """
     url = nfkc(url).strip()
+
+    if url.startswith("git@github.com:"):
+        owner_repo = url[len("git@github.com:"):]
+        if owner_repo.endswith(".git"):
+            owner_repo = owner_repo[:-4]
+        url = f"https://github.com/{owner_repo}"
+    elif not urlsplit(url).scheme:
+        # No scheme; try to recognize github host
+        lower = url.lower()
+        if lower.startswith("www.github.com/"):
+            url = "https://" + url[4:]  # drop 'www.'
+        elif lower.startswith("github.com/") or lower.startswith("raw.githubusercontent.com/"):
+            url = "https://" + url
+
     parts = urlsplit(url)
-    clean_url = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    # Normalize www. subdomain for github.com
+    netloc = parts.netloc
+    if netloc.lower() == "www.github.com":
+        netloc = "github.com"
+    clean_url = urlunsplit((parts.scheme, netloc, parts.path, "", ""))
 
     if clean_url.endswith(".git"):
         clean_url = clean_url[:-4]
@@ -58,6 +88,7 @@ def parse_repo_url(url: str) -> RepoRef:
     if m:
         return RepoRef(m["owner"], m["repo"], None, "")
 
-    if "github.com" in clean_url:
+    if "github.com" in clean_url or "raw.githubusercontent.com" in clean_url:
         raise ValueError(f"Unsupported GitHub URL shape: {url}")
-    raise ValueError(f"Unrecognized GitHub URL: {url}")
+    else:
+        raise ValueError(f"Unrecognized GitHub URL: {url}")
