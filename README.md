@@ -78,13 +78,13 @@
 ```
 
 ```bash
-GITHUB_TOKEN=ghp_xxx ./sh/run.sh ./docker/data/<HOMEWORK_NUMBER>
+GITHUB_TOKEN=ghp_XXX ./sh/run.sh ./docker/data/<HOMEWORK_NUMBER>
 ```
 
 > - GitHub API rate limit 회피를 위해 토큰 사용 가능
 
 ```bash
-[GITHUB_TOKEN=ghp_xxx] ./sh/nonfetch-run.sh ./docker/data/<HOMEWORK_NUMBER>
+[GITHUB_TOKEN=ghp_XXX] ./sh/nonfetch-run.sh ./docker/data/<HOMEWORK_NUMBER>
 ```
 
 > - Fetch 모드를 비활성화하여 로컬에 다운로드 된 코드만으로 채점 가능
@@ -93,7 +93,7 @@ GITHUB_TOKEN=ghp_xxx ./sh/run.sh ./docker/data/<HOMEWORK_NUMBER>
 
 ```bash
 cd script
-python3 similarity_report.py ../docker/data/<HOMEWORK_NUMBER> -o ./docker/data/<HOMEWORK_NUMBER>/similarity.json
+python3 similarity_report.py ../docker/data/<HOMEWORK_NUMBER> -o ../docker/data/<HOMEWORK_NUMBER>/similarity.json
 ```
 
 ---
