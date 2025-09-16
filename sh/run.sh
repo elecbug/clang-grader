@@ -8,7 +8,7 @@ set -euo pipefail
 #   GITHUB_TOKEN=ghp_xxx ./run.sh hw-test
 # ============================================================
 
-IMAGE_NAME="c-stdin-tester"
+IMAGE_NAME=$(cat $(pwd)/sh/name/IMAGE_NAME)
 
 ROOT_DIR="$(pwd)"
 WORK_DIR="${ROOT_DIR}/docker"
@@ -25,12 +25,16 @@ CLEAN_SUITE="${ARG_SUITE#data/}"
 CLEAN_SUITE="${CLEAN_SUITE#./}"
 SUITE_NAME="$(basename "$CLEAN_SUITE")"
 SUITE_DIR="${ROOT_DIR}/docker/data/${SUITE_NAME}"
-TESTS_PATH="${SUITE_DIR}/tests.json"
-MAP_JSON="${SUITE_DIR}/student_map.json"
+
+TESTS_NAME=$(cat $(pwd)/sh/name/TESTS_NAME)
+STUDENT_MAP_NAME=$(cat $(pwd)/sh/name/STUDENT_MAP_NAME)
+
+TESTS_PATH="${SUITE_DIR}/${TESTS_NAME}"
+MAP_JSON="${SUITE_DIR}/${STUDENT_MAP_NAME}"
 
 # Checks
 [[ -d "${SUITE_DIR}" ]] || { echo "Suite directory not found: ${SUITE_DIR}"; exit 1; }
-[[ -f "${TESTS_PATH}" ]] || { echo "tests.json not found: ${TESTS_PATH}"; exit 1; }
+[[ -f "${TESTS_PATH}" ]] || { echo "Test JSON not found: ${TESTS_PATH}"; exit 1; }
 [[ -f "${MAP_JSON}"  ]] || { echo "Mapping JSON not found: ${MAP_JSON}"; exit 1; }
 sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || { echo "Build image first: ./build.sh"; exit 1; }
 
@@ -86,7 +90,7 @@ for d in "${stu_dirs[@]}"; do
     "${IMAGE_NAME}" \
       --suite-name "${stu_name}" \
       --src-dir "/work/data/${SUITE_NAME}/${stu_name}" \
-      --tests "/work/data/${SUITE_NAME}/tests.json" \
+      --tests "/work/data/${SUITE_NAME}/${TESTS_NAME}" \
       --bin "${BIN_PATH}" \
       --timeout 2.0 \
       --normalize-newlines \

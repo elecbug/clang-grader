@@ -29,9 +29,12 @@ CLEAN_SUITE="${ARG_SUITE#data/}"
 CLEAN_SUITE="${CLEAN_SUITE#./}"
 SUITE_NAME="${CLEAN_SUITE}"
 
+TABLE_TXT_NAME=$(cat $(pwd)/sh/name/STUDENT_TABLE_NAME)
+STUDENT_MAP_NAME=$(cat $(pwd)/sh/name/STUDENT_MAP_NAME)
+
 DATA_DIR="${ROOT_DIR}/${SUITE_NAME}"
-TABLE_TXT="${DATA_DIR}/table.txt"
-OUT_JSON="${DATA_DIR}/student_map.json"
+TABLE_TXT="${DATA_DIR}/${TABLE_TXT_NAME}"
+OUT_JSON="${DATA_DIR}/${STUDENT_MAP_NAME}"
 
 # --- Checks
 [[ -f "${SCRIPT_PATH}" ]] || { echo "Not found: ${SCRIPT_PATH}"; exit 1; }
@@ -42,7 +45,7 @@ OUT_JSON="${DATA_DIR}/student_map.json"
 mkdir -p "${DATA_DIR}"
 
 # --- Run converter
-echo "Generating student_map.json for suite '${SUITE_NAME}' with limit '${LIMIT_ISO}'..."
+echo "Generating ${STUDENT_MAP_NAME} for suite '${SUITE_NAME}' with limit '${LIMIT_ISO}'..."
 "${PYTHON_BIN}" "${SCRIPT_PATH}" \
   "${TABLE_TXT}" \
   --limit "${LIMIT_ISO}" \
