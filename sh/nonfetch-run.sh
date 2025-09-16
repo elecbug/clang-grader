@@ -24,28 +24,40 @@ ARG_SUITE="$1"
 CLEAN_SUITE="${ARG_SUITE#data/}"
 CLEAN_SUITE="${CLEAN_SUITE#./}"
 SUITE_NAME="$(basename "$CLEAN_SUITE")"
+SUITE_DIR="${ROOT_DIR}/${CLEAN_SUITE}"
 
 TESTS_NAME=$(cat $(pwd)/sh/name/TESTS_NAME)
 STUDENT_MAP_NAME=$(cat $(pwd)/sh/name/STUDENT_MAP_NAME)
 
-SUITE_DIR="${ROOT_DIR}/docker/data/${SUITE_NAME}"
 TESTS_PATH="${SUITE_DIR}/${TESTS_NAME}"
+# MAP_JSON="${SUITE_DIR}/${STUDENT_MAP_NAME}"
 
 # Checks
 [[ -d "${SUITE_DIR}" ]] || { echo "Suite directory not found: ${SUITE_DIR}"; exit 1; }
 [[ -f "${TESTS_PATH}" ]] || { echo "Test JSON not found: ${TESTS_PATH}"; exit 1; }
+# [[ -f "${MAP_JSON}"  ]] || { echo "Mapping JSON not found: ${MAP_JSON}"; exit 1; }
 sudo docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1 || { echo "Build image first: ./build.sh"; exit 1; }
 
-# 1) Fetch & stage (dir-scope; preserve subdirs; respect limit)
+# # 1) Fetch & stage (dir-scope; preserve subdirs; respect limit)
+# echo "========================================"
+# echo "Fetching sources using ${MAP_JSON} into ${SUITE_NAME}"
+# python3 "${WORK_DIR}/grade_fetcher.py" \
+#   --map "${MAP_JSON}" \
+#   --suite "raw" \
+#   --data-root "${SUITE_DIR}" \
+#   --rename-to "main.c" \
+#   --scope "dir" \
+#   --preserve-subdirs \
+#   --respect-limit || { echo "Fetch step failed."; exit 1; }
 
 # 2) Grade each student under suite
-REPORT_DIR="${WORK_DIR}/reports/${SUITE_NAME}"
+REPORT_DIR="${SUITE_DIR}/report/"
 mkdir -p "${REPORT_DIR}"
 
 echo "========================================"
 echo "Running tests for suite '${SUITE_NAME}'..."
 shopt -s nullglob
-stu_dirs=("${SUITE_DIR}"/*/)
+stu_dirs=("${SUITE_DIR}/raw"/*/)
 [[ ${#stu_dirs[@]} -gt 0 ]] || { echo "No student directories found under ${SUITE_DIR}"; exit 1; }
 
 total_students=0
@@ -58,8 +70,8 @@ for d in "${stu_dirs[@]}"; do
   echo "----------------------------------------"
   echo "Student: ${stu_name}"
 
-  BIN_PATH="/work/data/${SUITE_NAME}/${stu_name}/a.out"
-  REPORT_PATH="/work/reports/${SUITE_NAME}/${stu_name}.json"
+  BIN_PATH="/work/${SUITE_NAME}/raw/${stu_name}/a.out"
+  REPORT_PATH="/work/${SUITE_NAME}/report/${stu_name}.json"
 
   MAIN_HINT_PATH="${d}/.main_filename"
   MAIN_FILE="main.c"
@@ -69,7 +81,7 @@ for d in "${stu_dirs[@]}"; do
 
   set +e
   sudo docker run --rm \
-    -v "${WORK_DIR}:/work:rw" \
+    -v "${WORK_DIR}/data:/work:rw" \
     -e GITHUB_TOKEN \
     --user "$(id -u):$(id -g)" \
     --cpus="1.0" --memory="256m" --pids-limit=256 \
@@ -77,8 +89,8 @@ for d in "${stu_dirs[@]}"; do
     --tmpfs /tmp:rw,size=64m \
     "${IMAGE_NAME}" \
       --suite-name "${stu_name}" \
-      --src-dir "/work/data/${SUITE_NAME}/${stu_name}" \
-      --tests "/work/data/${SUITE_NAME}/${TESTS_NAME}" \
+      --src-dir "/work/${SUITE_NAME}/raw/${stu_name}" \
+      --tests "/work/${SUITE_NAME}/${TESTS_NAME}" \
       --bin "${BIN_PATH}" \
       --timeout 2.0 \
       --normalize-newlines \
@@ -95,10 +107,10 @@ done
 echo "========================================"
 echo "Per-student summary table for suite '${SUITE_NAME}':"
 sudo docker run --rm \
-  -v "${WORK_DIR}:/work" \
+  -v "${WORK_DIR}/data:/work" \
   "${IMAGE_NAME}" \
-    --summarize-dir "/work/reports/${SUITE_NAME}"
+    --summarize-dir "/work/${SUITE_NAME}/report"
 
 echo "========================================"
 echo "Students graded: ${total_students}, Failures (any test failed or compilation error): ${failed_students}"
-echo "Reports saved under: ${REPORT_DIR}"
+echo "Report saved under: ${REPORT_DIR}"
