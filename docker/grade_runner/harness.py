@@ -39,14 +39,17 @@ def normalize(s: str, strip_mode: str, normalize_newlines: bool) -> str:
 
 
 def run_one(bin_path: str, stdin_data: str, timeout: float) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [bin_path],
-        input=stdin_data,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=timeout,
-    )
+    try:
+        return subprocess.run(
+            [bin_path],
+            input=stdin_data,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Error running binary '{bin_path}': {e}") from e
 
 
 def diff_block(expected: str, got: str) -> str:

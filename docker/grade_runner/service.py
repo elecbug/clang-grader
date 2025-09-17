@@ -122,6 +122,16 @@ class RunnerService:
                     "details": f"Timeout after {cfg.timeout}s",
                 })
                 continue
+            except Exception as e:
+                report["tests"].append({
+                    "name": name,
+                    "status": "ERROR",
+                    "exit_code": None,
+                    "stdout": "",
+                    "stderr": "",
+                    "details": f"Error running test: {e}",
+                })
+                continue
 
             got_norm = normalize(out, strip, cfg.normalize_newlines)
             if not cfg.case_sensitive:
