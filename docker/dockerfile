@@ -1,12 +1,16 @@
-# syntax=docker/dockerfile:1
+FROM ubuntu:22.04
 
-FROM debian:bookworm-slim
-
-# Install toolchain, C standard library headers, and Python
+# Install toolchain, locales, C standard library headers, and Python
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        build-essential python3 python3-pip ca-certificates time && \
-    rm -rf /var/lib/apt/lists/*
+        build-essential python3 python3-pip ca-certificates time locales && \
+    rm -rf /var/lib/apt/lists/* && \
+    locale-gen en_US.UTF-8 ko_KR.UTF-8
+
+# Set UTF-8 locale
+ENV LANG=ko_KR.UTF-8 \
+    LANGUAGE=ko_KR:en \
+    LC_ALL=ko_KR.UTF-8
 
 WORKDIR /app
 

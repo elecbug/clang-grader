@@ -28,6 +28,7 @@ REPO_RE = re.compile(
 
 MAIN_RE = re.compile(r"\bint\s+main\s*\(")
 
+
 def nfkc(s: str) -> str:
     """Normalize unicode to NFKC."""
     return unicodedata.normalize("NFKC", s)
@@ -45,10 +46,11 @@ def encode_path_preserving_segments(path: str) -> str:
 def parse_repo_url(url: str) -> RepoRef:
     """Parse a GitHub URL into RepoRef. Raises ValueError on failure.
 
-    Supported shapes are identical to the legacy script: blob/raw/tree/repo root.
+    Supported shapes: blob/raw/tree/repo root.
     """
     url = nfkc(url).strip()
 
+    # Handle scp-like syntax
     if url.startswith("git@github.com:"):
         owner_repo = url[len("git@github.com:"):]
         if owner_repo.endswith(".git"):
@@ -63,27 +65,49 @@ def parse_repo_url(url: str) -> RepoRef:
             url = "https://" + url
 
     parts = urlsplit(url)
-    # Normalize www. subdomain for github.com
-    netloc = parts.netloc
-    if netloc.lower() == "www.github.com":
+
+    # Normalize scheme/netloc to lowercase
+    scheme = parts.scheme.lower()
+    netloc = parts.netloc.lower()
+    if netloc == "www.github.com":
         netloc = "github.com"
-    clean_url = urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+
+    clean_url = urlunsplit((scheme, netloc, parts.path, "", ""))
 
     if clean_url.endswith(".git"):
         clean_url = clean_url[:-4]
 
+    # --- Match blob ---
     m = BLOB_RE.match(clean_url)
     if m:
-        return RepoRef(m["owner"], m["repo"], m["branch"], m["path"])
+        return RepoRef(
+            m["owner"],
+            m["repo"],
+            m["branch"],
+            unquote(m["path"])  # decode %EA%... into real Unicode
+        )
 
+    # --- Match raw ---
     m = RAW_RE.match(clean_url)
     if m:
-        return RepoRef(m["owner"], m["repo"], m["branch"], m["path"])
+        return RepoRef(
+            m["owner"],
+            m["repo"],
+            m["branch"],
+            unquote(m["path"])
+        )
 
+    # --- Match tree ---
     m = TREE_RE.match(clean_url)
     if m:
-        return RepoRef(m["owner"], m["repo"], m["branch"], m["path"] or "")
+        return RepoRef(
+            m["owner"],
+            m["repo"],
+            m["branch"],
+            unquote(m["path"] or "")
+        )
 
+    # --- Match repo root ---
     m = REPO_RE.match(clean_url)
     if m:
         return RepoRef(m["owner"], m["repo"], None, "")
