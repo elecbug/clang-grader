@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import List, Optional, Tuple, Union
 
@@ -141,7 +142,16 @@ class RunnerService:
                 got_cmp = got_norm
                 candidates = expected_norm
 
-            ok_out = (got_cmp in candidates)
+            # --- regex based compare ---
+            ok_out = False
+            for pattern in candidates:
+                try:
+                    if re.fullmatch(pattern, got_cmp, re.DOTALL):
+                        ok_out = True
+                        break
+                except re.error as regex_err:
+                    pass
+
             ok_code = (code == exp_exit)
             ok = ok_out and ok_code
 
